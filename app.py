@@ -73,8 +73,8 @@ with st.sidebar:
 
     st.subheader("3. 🥡 葷食外帶名單")
     meat_takeout_names = st.multiselect("預定葷食外帶人員", 
-                                        options=["國聯鄭釗文", "臨時新增A", "臨時新增B"], 
-                                        default=["國聯鄭釗文"])
+                                        options=["國聯鄭釗文", "國聯吳光豪", "臨時新增B"], 
+                                        default=["國聯鄭釗文", "歐米巴"])
 
     st.subheader("4. 🍽️ 現場餐盤名單")
     plate_names = st.multiselect("預定餐盤人員", 
