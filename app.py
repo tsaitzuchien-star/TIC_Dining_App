@@ -279,7 +279,7 @@ afternoon_msg = f"""【 💰 {display_date} 中創園區午餐結算明細 】
 三、 現場付現扣除
 * 現金付費：{cash_count} 份
 * 扣除金額：{cash_count} 份 × 80 元 = - {cash_deduction:,} 元
-⚠️ 備註：現金 {cash_deduction} 元已備妥，請於下午回收廚餘時一併核對，並於紙本簽名後帶走。
+⚠️ 備註：現金 {cash_deduction} 元已備妥，請於下午回收餐桶時一併核對，並於紙本簽名後帶走。
 
 🎯 四、 今日最終結帳總額
 ➡️ 團膳請款金額：{final_payment:,} 元"""
