@@ -283,13 +283,13 @@ afternoon_msg = f"""【 💰 {display_date} 中創園區午餐結算明細 】
 * 小計：{grand_total} 份 × 80 元 = {total_meal_cost:,} 元
 
 二、 額外加主菜
-* 今日加主菜：{extra_main_count} 份 (固定主菜)
+* 今日加主菜：{extra_main_count} 份 
 * 小計：{extra_main_count} 份 × 30 元 = {extra_main_cost:,} 元
 
 三、 現場付現交接明細
 * 現金付費便當：{cash_count} 份 × 80 元 = {cash_deduction:,} 元
 * 加購外帶便當盒：{box_count} 組 × 5 元 = {box_cost:,} 元
-* ⚠️ 總交接現金：{total_cash_handover:,} 元 (已備妥，請於下午回收廚餘時一併核對，並於紙本簽名後帶走)
+* ⚠️ 總交接現金：{total_cash_handover:,} 元 (已備妥，請於下午回收餐桶時一併核對，並於紙本簽名後帶走)
 
 🎯 四、 今日最終結帳總額 (不含便當盒代收付)
 ➡️ 團膳請款金額：{final_payment:,} 元"""
