@@ -72,7 +72,6 @@ with st.sidebar:
         veg_no_rice = st.multiselect("不要白飯", ["陳ＯＯ", "王ＯＯ"])
 
     st.subheader("3. 🥡 葷食外帶名單")
-    # 🌟 已修復：將歐米巴加入 options 中
     meat_takeout_names = st.multiselect("預定葷食外帶人員", 
                                         options=["國聯鄭釗文", "國聯吳光豪", "歐米巴", "臨時新增B"], 
                                         default=["國聯鄭釗文", "歐米巴"])
@@ -140,7 +139,11 @@ with st.sidebar:
          st.error(f"連線失敗，請檢查網址或權限。")
 
     st.subheader("6. 下午結算專用 (財務記帳)")
-    cash_count = st.number_input("現場付現 (人數)", min_value=0, value=11, step=1)
+    cash_count = st.number_input("現場付現 (人數)", min_value=0, value=15, step=1)
+    
+    # 🌟 新增：便當盒加購欄位
+    box_count = st.number_input("加購外帶便當盒 (組)", min_value=0, value=4, step=1)
+    
     card_count = st.number_input("工研院刷卡 (人數)", min_value=0, value=46, step=1)
     hd_count = st.number_input("環電 (人數)", min_value=0, value=36, step=1)
     agl_count = st.number_input("奧鋼聯 (人數)", min_value=0, value=0, step=1)
@@ -164,14 +167,13 @@ if initial_side_cost % 80 != 0:
     extra_side_cost = adjusted_side_cost
 else:
     extra_side_count = initial_side_cost // 80
-    # 🌟 已修復：補上完美倍數時的加購總計變數
     extra_side_cost = initial_side_cost  
 
 veg_total = len(veg_normal) + len(veg_no_rice)
 bucket_total = base_count + extra_side_count
 grand_total = bucket_total + veg_total
 
-# 🌟 名字條列式排版處理 (對內備餐用)
+# 名字條列式排版處理 (對內備餐用)
 veg_details_list = []
 for name in veg_normal:
     veg_details_list.append(f"{name}(正常飯)")
@@ -182,20 +184,24 @@ veg_details_str = "\n    - " + "\n    - ".join(veg_details_list) if veg_details_
 meat_details_str = "\n    - " + "\n    - ".join(meat_takeout_names) if meat_takeout_names else "無"
 plate_details_str = "\n    - " + "\n    - ".join(plate_names) if plate_names else "無"
 
-# 🌟 方便素分類條列式排版 (對外訂餐用)
+# 方便素分類條列式排版 (對外訂餐用)
 veg_normal_str = "\n    - " + "\n    - ".join(veg_normal) if veg_normal else "無"
 veg_no_rice_str = "\n    - " + "\n    - ".join(veg_no_rice) if veg_no_rice else "無"
 
+# 🌟 財務邏輯更新：分開計算「公司請款」與「現場現金交接」
 total_meal_cost = grand_total * 80
 extra_main_cost = extra_main_count * 30
 
-cash_deduction = cash_count * 80
+cash_deduction = cash_count * 80  # 便當收現
+box_cost = box_count * 5          # 額外紙盒收現
+total_cash_handover = cash_deduction + box_cost  # 下午要交給團膳大哥的實體現金總額
+
 card_deduction = card_count * 80
 hd_deduction = hd_count * 80
 agl_deduction = agl_count * 80
 
 daily_difference = total_meal_cost - cash_deduction - card_deduction - hd_deduction - agl_deduction
-final_payment = total_meal_cost + extra_main_cost - cash_deduction
+final_payment = total_meal_cost + extra_main_cost - cash_deduction  # 公司月底匯款金額不變，只扣掉便當現金
 
 # ==========================================
 # 4. 早上 08:30 - 09:00 訂餐發送區
@@ -269,6 +275,7 @@ st.header("💰 下午 13:00 - 14:00 結算發送區")
 st.markdown("""⚠️ **請發送至以下 LINE 群組：**
 1. 👥 **工研院 強心臟組（家常在）**""")
 
+# 🌟 更新結算訊息，清楚交代便當盒的現金去向
 afternoon_msg = f"""【 💰 {display_date} 中創園區午餐結算明細 】
 
 一、 總供餐費用
@@ -279,12 +286,12 @@ afternoon_msg = f"""【 💰 {display_date} 中創園區午餐結算明細 】
 * 今日加主菜：{extra_main_count} 份 (固定主菜)
 * 小計：{extra_main_count} 份 × 30 元 = {extra_main_cost:,} 元
 
-三、 現場付現扣除
-* 現金付費：{cash_count} 份
-* 扣除金額：{cash_count} 份 × 80 元 = - {cash_deduction:,} 元
-⚠️ 備註：現金 {cash_deduction} 元已備妥，請於下午回收廚餘時一併核對，並於紙本簽名後帶走。
+三、 現場付現交接明細
+* 現金付費便當：{cash_count} 份 × 80 元 = {cash_deduction:,} 元
+* 加購外帶便當盒：{box_count} 組 × 5 元 = {box_cost:,} 元
+* ⚠️ 總交接現金：{total_cash_handover:,} 元 (已備妥，請於下午回收廚餘時一併核對，並於紙本簽名後帶走)
 
-🎯 四、 今日最終結帳總額
+🎯 四、 今日最終結帳總額 (不含便當盒代收付)
 ➡️ 團膳請款金額：{final_payment:,} 元"""
 
 st.code(afternoon_msg, language="text")
