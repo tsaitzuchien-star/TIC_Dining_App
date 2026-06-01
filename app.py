@@ -72,8 +72,9 @@ with st.sidebar:
         veg_no_rice = st.multiselect("不要白飯", ["陳ＯＯ", "王ＯＯ"])
 
     st.subheader("3. 🥡 葷食外帶名單")
+    # 🌟 已修復：將歐米巴加入 options 中
     meat_takeout_names = st.multiselect("預定葷食外帶人員", 
-                                        options=["國聯鄭釗文", "國聯吳光豪", "歐米巴", "臨時新增A"], 
+                                        options=["國聯鄭釗文", "國聯吳光豪", "歐米巴", "臨時新增B"], 
                                         default=["國聯鄭釗文", "歐米巴"])
 
     st.subheader("4. 🍽️ 現場餐盤名單")
@@ -163,6 +164,8 @@ if initial_side_cost % 80 != 0:
     extra_side_cost = adjusted_side_cost
 else:
     extra_side_count = initial_side_cost // 80
+    # 🌟 已修復：補上完美倍數時的加購總計變數
+    extra_side_cost = initial_side_cost  
 
 veg_total = len(veg_normal) + len(veg_no_rice)
 bucket_total = base_count + extra_side_count
@@ -225,7 +228,7 @@ morning_msg = f"""【 📅 {display_date} 中創園區訂餐明細 】
 
 ⚠️ 三、 廚房提醒事項
 * 🔴 請務必預留「檢體一份」
-* 📢 將視今天入園人數於 09:20 前，確認是否追加餐點與今日最終數量。追加部分放在「補菜桶」即可。"""
+* 📢 將視今天入園人數於 09:20 前，回報是否追加餐點與今日最終數量。追加部分放在「補菜桶」即可。"""
 
 st.code(morning_msg, language="text")
 
@@ -279,7 +282,7 @@ afternoon_msg = f"""【 💰 {display_date} 中創園區午餐結算明細 】
 三、 現場付現扣除
 * 現金付費：{cash_count} 份
 * 扣除金額：{cash_count} 份 × 80 元 = - {cash_deduction:,} 元
-⚠️ 備註：現金 {cash_deduction} 元已備妥，請於下午回收餐桶時一併核對，並於紙本簽名後帶走。
+⚠️ 備註：現金 {cash_deduction} 元已備妥，請於下午回收廚餘時一併核對，並於紙本簽名後帶走。
 
 🎯 四、 今日最終結帳總額
 ➡️ 團膳請款金額：{final_payment:,} 元"""
