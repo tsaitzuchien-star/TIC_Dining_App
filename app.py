@@ -275,7 +275,7 @@ st.header("💰 下午 13:00 - 14:00 結算發送區")
 st.markdown("""⚠️ **請發送至以下 LINE 群組：**
 1. 👥 **工研院 強心臟組（家常在）**""")
 
-# 🌟 更新結算訊息，清楚交代便當盒的現金去向
+# 🌟 更新結算訊息，新增第五點交代環電今日用餐人數
 afternoon_msg = f"""【 💰 {display_date} 中創園區午餐結算明細 】
 
 一、 總供餐費用
@@ -292,7 +292,10 @@ afternoon_msg = f"""【 💰 {display_date} 中創園區午餐結算明細 】
 * ⚠️ 總交接現金：{total_cash_handover:,} 元 (已備妥，請於下午回收餐桶時一併核對，並於紙本簽名後帶走)
 
 🎯 四、 今日最終結帳總額 (不含便當盒代收付)
-➡️ 團膳請款金額：{final_payment:,} 元"""
+➡️ 團膳請款金額：{final_payment:,} 元
+
+🏢 五、 環電今日用餐人數
+* 總計：{hd_count} 人"""
 
 st.code(afternoon_msg, language="text")
 
