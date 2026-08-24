@@ -18,6 +18,7 @@ st.markdown("負責每日與「家常在」團膳業者的自動化訂餐與結�
 current_time = datetime.now()
 today_str = current_time.strftime("%Y-%m-%d")
 
+# 已更新為正確的 csv 輸出網址格式
 MENU_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT9QdhFOdM2cp7FI1qu4VNRvwOF6mHDJZ7OP0iYTu2shMiF5PrZI3lUzyP436KyBV3uv49akqBytF47/pub?output=csv"
 VEG_CSV_URL = "https://docs.google.com/spreadsheets/d/1dGsbEe6aCJo0gexj5Xo2gdTmQ_oA6E4VNIdmEHZDGZM/export?format=csv&gid=1496853361"
 RISK_CSV_URL = "https://docs.google.com/spreadsheets/d/1dGsbEe6aCJo0gexj5Xo2gdTmQ_oA6E4VNIdmEHZDGZM/export?format=csv&gid=2090477701"
@@ -67,7 +68,7 @@ with st.sidebar:
         veg_normal = st.multiselect("正常飯", options=normal_rice_list, default=normal_rice_list)
         veg_no_rice = st.multiselect("不要白飯", options=no_rice_list, default=no_rice_list)
     except Exception as e:
-        st.warning("⚠️ 吃素名單載入失敗，使用預設值。")
+        st.warning(f"⚠️ 吃素名單載入失敗，使用預設值。詳細錯誤：{e}")
         veg_normal = st.multiselect("正常飯", ["蔡ＯＯ", "林ＯＯ"])
         veg_no_rice = st.multiselect("不要白飯", ["陳ＯＯ", "王ＯＯ"])
 
@@ -136,7 +137,8 @@ with st.sidebar:
             st.error(f"找不到 {today_str} 的菜單！請確認日期。")
             
     except Exception as e:
-         st.error(f"連線失敗，請檢查網址或權限。")
+         # 🌟 已更新：加入詳細錯誤 {e}，方便未來防呆與除錯
+         st.error(f"連線失敗，請檢查網址或權限。詳細錯誤：{e}")
 
     st.subheader("6. 下午結算專用 (財務記帳)")
     cash_count = st.number_input("現場付現 (人數)", min_value=0, value=15, step=1)
