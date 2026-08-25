@@ -5,9 +5,15 @@ import math
 import pyodbc  # SQL Server 連線套件
 
 # ==========================================
-# 0. 網頁基本設定
+# 0. 網頁基本設定 & 快取功能 (🌟 解決 409 衝突的核心)
 # ==========================================
 st.set_page_config(page_title="中創園區用餐預測戰情室", page_icon="🍱", layout="centered")
+
+# 🌟 新增快取機制：把下載下來的資料暫存 600 秒 (10 分鐘)
+# 這樣就算您在網頁上狂點數字，也不會重複去向 Google 要資料而被阻擋！
+@st.cache_data(ttl=600)
+def load_csv_data(url):
+    return pd.read_csv(url)
 
 st.title("🍱 中創園區用餐預測戰情室")
 st.markdown("負責每日與「家常在」團膳業者的自動化訂餐與結算系統")
@@ -18,7 +24,6 @@ st.markdown("負責每日與「家常在」團膳業者的自動化訂餐與結�
 current_time = datetime.now()
 today_str = current_time.strftime("%Y-%m-%d")
 
-# 已更新為正確的 csv 輸出網址格式
 MENU_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT9QdhFOdM2cp7FI1qu4VNRvwOF6mHDJZ7OP0iYTu2shMiF5PrZI3lUzyP436KyBV3uv49akqBytF47/pub?output=csv"
 VEG_CSV_URL = "https://docs.google.com/spreadsheets/d/1dGsbEe6aCJo0gexj5Xo2gdTmQ_oA6E4VNIdmEHZDGZM/export?format=csv&gid=1496853361"
 RISK_CSV_URL = "https://docs.google.com/spreadsheets/d/1dGsbEe6aCJo0gexj5Xo2gdTmQ_oA6E4VNIdmEHZDGZM/export?format=csv&gid=2090477701"
@@ -61,7 +66,8 @@ with st.sidebar:
     
     st.subheader("2. 方便素名單 (打包外帶)")
     try:
-        df_veg = pd.read_csv(VEG_CSV_URL)
+        # 🌟 將 pd.read_csv 改為使用快取函數
+        df_veg = load_csv_data(VEG_CSV_URL)
         normal_rice_list = df_veg[df_veg['飯量偏好'].astype(str).str.contains('正常')]['姓名'].tolist()
         no_rice_list = df_veg[df_veg['飯量偏好'].astype(str).str.contains('不要')]['姓名'].tolist()
         
@@ -89,8 +95,9 @@ with st.sidebar:
     side_dishes = {} 
     
     try:
-        df_menu = pd.read_csv(MENU_CSV_URL)
-        df_risk = pd.read_csv(RISK_CSV_URL)
+        # 🌟 將 pd.read_csv 改為使用快取函數
+        df_menu = load_csv_data(MENU_CSV_URL)
+        df_risk = load_csv_data(RISK_CSV_URL)
         
         df_menu['橫向日期'] = pd.to_datetime(df_menu['日期']).dt.strftime('%Y-%m-%d')
         today_menu = df_menu[df_menu['橫向日期'] == today_str]
@@ -137,15 +144,12 @@ with st.sidebar:
             st.error(f"找不到 {today_str} 的菜單！請確認日期。")
             
     except Exception as e:
-         # 🌟 已更新：加入詳細錯誤 {e}，方便未來防呆與除錯
          st.error(f"連線失敗，請檢查網址或權限。詳細錯誤：{e}")
 
     st.subheader("6. 下午結算專用 (財務記帳)")
     cash_count = st.number_input("現場付現 (人數)", min_value=0, value=15, step=1)
     
-    # 🌟 新增：便當盒加購欄位
     box_count = st.number_input("加購外帶便當盒 (組)", min_value=0, value=4, step=1)
-    
     card_count = st.number_input("工研院刷卡 (人數)", min_value=0, value=46, step=1)
     hd_count = st.number_input("環電 (人數)", min_value=0, value=36, step=1)
     agl_count = st.number_input("奧鋼聯 (人數)", min_value=0, value=0, step=1)
@@ -175,7 +179,6 @@ veg_total = len(veg_normal) + len(veg_no_rice)
 bucket_total = base_count + extra_side_count
 grand_total = bucket_total + veg_total
 
-# 名字條列式排版處理 (對內備餐用)
 veg_details_list = []
 for name in veg_normal:
     veg_details_list.append(f"{name}(正常飯)")
@@ -186,24 +189,22 @@ veg_details_str = "\n    - " + "\n    - ".join(veg_details_list) if veg_details_
 meat_details_str = "\n    - " + "\n    - ".join(meat_takeout_names) if meat_takeout_names else "無"
 plate_details_str = "\n    - " + "\n    - ".join(plate_names) if plate_names else "無"
 
-# 方便素分類條列式排版 (對外訂餐用)
 veg_normal_str = "\n    - " + "\n    - ".join(veg_normal) if veg_normal else "無"
 veg_no_rice_str = "\n    - " + "\n    - ".join(veg_no_rice) if veg_no_rice else "無"
 
-# 🌟 財務邏輯更新：分開計算「公司請款」與「現場現金交接」
 total_meal_cost = grand_total * 80
 extra_main_cost = extra_main_count * 30
 
-cash_deduction = cash_count * 80  # 便當收現
-box_cost = box_count * 5          # 額外紙盒收現
-total_cash_handover = cash_deduction + box_cost  # 下午要交給團膳大哥的實體現金總額
+cash_deduction = cash_count * 80  
+box_cost = box_count * 5          
+total_cash_handover = cash_deduction + box_cost  
 
 card_deduction = card_count * 80
 hd_deduction = hd_count * 80
 agl_deduction = agl_count * 80
 
 daily_difference = total_meal_cost - cash_deduction - card_deduction - hd_deduction - agl_deduction
-final_payment = total_meal_cost + extra_main_cost - cash_deduction  # 公司月底匯款金額不變，只扣掉便當現金
+final_payment = total_meal_cost + extra_main_cost - cash_deduction  
 
 # ==========================================
 # 4. 早上 08:30 - 09:00 訂餐發送區
@@ -277,7 +278,6 @@ st.header("💰 下午 13:00 - 14:00 結算發送區")
 st.markdown("""⚠️ **請發送至以下 LINE 群組：**
 1. 👥 **工研院 強心臟組（家常在）**""")
 
-# 🌟 更新結算訊息，新增第五點交代環電今日用餐人數
 afternoon_msg = f"""【 💰 {display_date} 中創園區午餐結算明細 】
 
 一、 總供餐費用
