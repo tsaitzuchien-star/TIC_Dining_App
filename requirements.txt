@@ -1,3 +1,5 @@
 streamlit
 pandas
 pyodbc
+gspread
+google-auth
