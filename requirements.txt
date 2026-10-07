@@ -2,4 +2,5 @@ streamlit
 pandas
 pyodbc
 gspread
-google-authtzdata
+google-auth
+tzdata
