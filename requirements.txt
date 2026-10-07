@@ -3,3 +3,4 @@ pandas
 pyodbc
 gspread
 google-auth
+tzdata

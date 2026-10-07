@@ -1,8 +1,11 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import math
 import pyodbc  # SQL Server 連線套件
+
+TAIPEI = ZoneInfo("Asia/Taipei")
 
 # ==========================================
 # 0. 網頁基本設定 & 快取功能 (🌟 解決 409 衝突的核心)
@@ -99,7 +102,7 @@ st.markdown("負責每日與「家常在」團膳業者的自動化訂餐與結�
 # ==========================================
 # 1. 抓取系統時間與設定雲端資料庫網址
 # ==========================================
-current_time = datetime.now()
+current_time = datetime.now(TAIPEI)  # Streamlit Cloud 主機是 UTC，要換成台灣時間
 today_str = current_time.strftime("%Y-%m-%d")
 
 MENU_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT9QdhFOdM2cp7FI1qu4VNRvwOF6mHDJZ7OP0iYTu2shMiF5PrZI3lUzyP436KyBV3uv49akqBytF47/pub?output=csv"
@@ -133,7 +136,7 @@ with st.expander("📌 每週五必做任務：下週菜單同步與上架檢核
 with st.sidebar:
     st.header("⚙️ 今日參數設定")
     
-    selected_date = st.date_input("📅 選擇日期", value=current_time)
+    selected_date = st.date_input("📅 選擇日期", value=current_time.date())
     today_str = selected_date.strftime("%Y-%m-%d")
     
     weekdays_ch = ["一", "二", "三", "四", "五", "六", "日"]
@@ -351,7 +354,7 @@ if has_gs_secret():
     if st.button(f"💾 已傳給團膳：記錄今天送出 {grand_total} 份（{today_str}）"):
         try:
             st.success("✅ " + write_order([today_str, first_version or "", base_count, extra_side_count, veg_total,
-                                            base_count + veg_total, grand_total, datetime.now().strftime("%Y-%m-%d %H:%M")]))
+                                            base_count + veg_total, grand_total, datetime.now(TAIPEI).strftime("%Y-%m-%d %H:%M")]))
         except Exception as e:
             st.error(f"寫入失敗：{e}")
     st.caption("09:20 的追加／減量短訊請到戰情室複製，不用重貼這份明細。")
