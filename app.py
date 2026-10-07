@@ -15,6 +15,49 @@ st.set_page_config(page_title="中創園區用餐預測戰情室", page_icon="�
 def load_csv_data(url):
     return pd.read_csv(url)
 
+# ==========================================
+# 🌟 Google Sheets「CTIC_Access_Log」連線（讀卡機統計、回寫現金）
+# 需在 Streamlit Cloud 的 Settings → Secrets 貼上 [gcp_service_account]（google_key.json 內容）
+# 沒設定時不影響原本功能，只是改回手動輸入
+# ==========================================
+ACCESS_LOG_SHEET_ID = "1VI2Iw9EACSn-v7PjTB4wCG0cLeySg97tQ9GESWdilik"
+COUNTS_SHEET = "每日刷卡統計"   # 筆電下午一條龍寫入
+TREND_SHEET = "趨勢紀錄"
+
+def has_gs_secret():
+    try:
+        return "gcp_service_account" in st.secrets
+    except Exception:
+        return False
+
+def open_access_log():
+    import gspread
+    gc = gspread.service_account_from_dict(dict(st.secrets["gcp_service_account"]))
+    return gc.open_by_key(ACCESS_LOG_SHEET_ID)
+
+@st.cache_data(ttl=300)
+def load_daily_counts(date_str):
+    """回傳當天卡機統計 dict；查不到回傳 None，錯誤回傳字串"""
+    try:
+        rows = open_access_log().worksheet(COUNTS_SHEET).get_all_records()
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+    for r in rows:
+        if str(r.get("日期", "")).strip() == date_str:
+            return r
+    return None
+
+def write_cash_to_trend(date_str, cash):
+    """把現金份數寫進「趨勢紀錄」的 現金付款 欄（E 欄）；沒有這天就新增一列"""
+    ws = open_access_log().worksheet(TREND_SHEET)
+    dates = ws.col_values(1)
+    if date_str in dates:
+        row = dates.index(date_str) + 1
+        ws.update(values=[[cash]], range_name=f"E{row}", value_input_option="USER_ENTERED")
+        return f"已更新 {date_str} 的現金付款為 {cash} 份"
+    ws.append_row([date_str, "", "", "", cash], value_input_option="USER_ENTERED")
+    return f"已新增 {date_str}，現金付款 {cash} 份"
+
 st.title("🍱 中創園區用餐預測戰情室")
 st.markdown("負責每日與「家常在」團膳業者的自動化訂餐與結算系統")
 
@@ -150,9 +193,27 @@ with st.sidebar:
     cash_count = st.number_input("現場付現 (人數)", min_value=0, value=15, step=1)
     
     box_count = st.number_input("加購外帶便當盒 (組)", min_value=0, value=4, step=1)
-    card_count = st.number_input("工研院刷卡 (人數)", min_value=0, value=46, step=1)
-    hd_count = st.number_input("環電 (人數)", min_value=0, value=36, step=1)
-    agl_count = st.number_input("奧鋼聯 (人數)", min_value=0, value=0, step=1)
+
+    # 🌟 自動帶入：筆電 13:15 下午一條龍跑完 Afternoon_Report 後寫入「每日刷卡統計」
+    default_card, default_hd, default_agl = 46, 36, 0
+    if has_gs_secret():
+        counts = load_daily_counts(today_str)
+        if isinstance(counts, dict):
+            default_card = int(counts.get("工研院") or 0)
+            default_hd = int(counts.get("環電") or 0)
+            default_agl = int(counts.get("奧鋼聯") or 0)
+            st.success(f"✅ 已自動帶入卡機統計（{counts.get('更新時間', '')}）")
+        elif counts is None:
+            st.info("⏳ 今天的卡機統計還沒產生（下午一條龍跑完後會出現），先用預設值。")
+        else:
+            st.warning(f"⚠️ 讀取卡機統計失敗，請手動輸入。{counts}")
+        if st.button("🔄 重新讀取卡機統計"):
+            load_daily_counts.clear()
+            st.rerun()
+
+    card_count = st.number_input("工研院刷卡 (人數)", min_value=0, value=default_card, step=1)
+    hd_count = st.number_input("環電 (人數)", min_value=0, value=default_hd, step=1)
+    agl_count = st.number_input("奧鋼聯 (人數)", min_value=0, value=default_agl, step=1)
 
 # ==========================================
 # 3. 背景邏輯計算與字串排版
@@ -300,6 +361,14 @@ afternoon_msg = f"""【 💰 {display_date} 中創園區午餐結算明細 】
 * 總計：{hd_count} 人"""
 
 st.code(afternoon_msg, language="text")
+
+# 🌟 現金份數回寫「趨勢紀錄」，戰情室的實際用餐 = 刷卡 + 現金
+if has_gs_secret():
+    if st.button(f"💾 把現金 {cash_count} 份寫入趨勢紀錄（{today_str}）"):
+        try:
+            st.success("✅ " + write_cash_to_trend(today_str, cash_count))
+        except Exception as e:
+            st.error(f"寫入失敗：{e}")
 
 st.divider()
 
