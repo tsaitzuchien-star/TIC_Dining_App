@@ -3,7 +3,6 @@ import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import math
-import pyodbc  # SQL Server 連線套件
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 
@@ -307,11 +306,7 @@ cash_deduction = cash_count * 80
 box_cost = box_count * 5          
 total_cash_handover = cash_deduction + box_cost  
 
-card_deduction = card_count * 80
-hd_deduction = hd_count * 80
-agl_deduction = agl_count * 80
 
-daily_difference = total_meal_cost - cash_deduction - card_deduction - hd_deduction - agl_deduction
 final_payment = total_meal_cost + extra_main_cost - cash_deduction  
 
 # ==========================================
@@ -427,75 +422,3 @@ if has_gs_secret():
         except Exception as e:
             st.error(f"寫入失敗：{e}")
 
-st.divider()
-
-# ==========================================
-# 7. 雲端帳務資料庫 (防呆查帳專區)
-# ==========================================
-st.header("📊 雲端帳務資料庫 (防呆複製區)")
-st.markdown("""👉 **月底對帳救星！** 複製下方文字，到「中創園區_每日帳務資料庫」試算表的空白儲存格按下 `Ctrl + V`，即可自動分格！""")
-audit_row = f"{today_str}\t{backup_week}\t{grand_total}\t{cash_deduction}\t{daily_difference}\t{card_count}\t{agl_count}\t{hd_count}"
-st.code(audit_row, language="text")
-
-st.divider()
-
-# ==========================================
-# 8. 月底結算報表匯出區 (專屬環電、奧鋼聯)
-# ==========================================
-st.header("🗄️ 月底結算自動撈取區 (環電與奧鋼聯)")
-st.markdown("直接從 SQL Server `Vendor_Access` 資料表撈取指定區間的加總數據，拒絕人工計算錯誤！工研院資料請直接至工研食堂後台匯出。")
-
-with st.expander("點擊展開：產生 SQL 結算報表", expanded=False):
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("結算起始日期", value=datetime(2026, 4, 1))
-    with col2:
-        end_date = st.date_input("結算結束日期", value=datetime(2026, 4, 30))
-
-    if st.button("🚀 一鍵撈取 SQL 資料"):
-        try:
-            SERVER = r'14-0A00035-93\SQLEXPRESS'
-            DATABASE = 'Dining' 
-            
-            DB_DATE_COL = "AccessDate" 
-            DB_VENDOR_COL = "DepName"  
-            
-            conn_str = f'DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={SERVER};DATABASE={DATABASE};Trusted_Connection=yes;'
-            conn = pyodbc.connect(conn_str)
-            
-            sql_query = f"""
-            SELECT 
-                CAST([{DB_DATE_COL}] AS DATE) AS 結帳日期,
-                [{DB_VENDOR_COL}] AS 公司名稱, 
-                COUNT(*) AS 訂餐總份數
-            FROM 
-                Vendor_Access
-            WHERE 
-                CAST([{DB_DATE_COL}] AS DATE) >= '{start_date}' 
-                AND CAST([{DB_DATE_COL}] AS DATE) <= '{end_date}'
-                AND [{DB_VENDOR_COL}] IN ('環電', '環電股份有限公司', '奧鋼聯')
-            GROUP BY 
-                CAST([{DB_DATE_COL}] AS DATE), 
-                [{DB_VENDOR_COL}]
-            ORDER BY 
-                結帳日期 ASC;
-            """
-            
-            df_sql = pd.read_sql(sql_query, conn)
-            conn.close()
-            
-            if df_sql.empty:
-                st.warning("這段期間內沒有環電或奧鋼聯的訂餐紀錄喔！")
-            else:
-                st.success("✅ 資料庫撈取成功！以下為精準結算數據：")
-                st.dataframe(df_sql, use_container_width=True)
-                
-                csv = df_sql.to_csv(index=False).encode('utf-8-sig')
-                st.download_button(
-                    label="📥 下載對帳表 (CSV檔)",
-                    data=csv,
-                    file_name=f"環電_奧鋼聯_結算表_{start_date}至{end_date}.csv",
-                    mime="text/csv",
-                )
-        except Exception as e:
-            st.error(f"連線失敗！請檢查錯誤訊息：{e}")
