@@ -25,10 +25,10 @@ def load_csv_data(url):
 ACCESS_LOG_SHEET_ID = "1VI2Iw9EACSn-v7PjTB4wCG0cLeySg97tQ9GESWdilik"
 COUNTS_SHEET = "每日刷卡統計"   # 筆電下午一條龍寫入
 TREND_SHEET = "趨勢紀錄"
-ORDER_SHEET = "團膳訂單"        # 每天一列：早上送出的份數（戰情室 09:20 用）＋加量原因、主菜、換菜、下午結算
+ORDER_SHEET = "團膳訂單"        # 每天一列：早上送出的份數＋加量原因、主菜、換菜、下午結算
 ORDER_HEADERS = ["日期", "戰情室第一版", "實際正常數量", "換菜折合", "方便素", "用餐人數", "總訂餐份數", "寫入時間", "加購主菜",
                  "臨時加量", "加量原因", "主菜", "主菜類型", "換菜明細",
-                 "09:20調整", "總供餐數", "實際加購主菜", "現場付現", "便當盒", "環電", "結算寫入時間"]
+                 "供餐調整", "總供餐數", "實際加購主菜", "現場付現", "便當盒", "環電", "結算寫入時間"]
 AM_COLS = ("A", "N")            # 早上按鈕寫 A~N
 PM_COLS = ("O", "U")            # 下午按鈕寫 O~U
 MAIN_TYPES = ["整塊（雞腿、排骨等，一人一塊）", "散肉（肉片、肉絲，容易多夾）"]
@@ -170,7 +170,7 @@ if has_gs_secret():
         else:
             st.warning("08:30 ⬜ 早上明細還沒記錄")
     with p2:
-        st.info(f"09:20 追加／減量短訊請到 [戰情室]({DASHBOARD_URL}) 複製")
+        st.info(f"📊 今日預測請看 [戰情室]({DASHBOARD_URL})")
     with p3:
         if status.get("cash"):
             st.success(f"13:00 ✅ 現金 {status['cash']} 份已寫回")
@@ -341,7 +341,7 @@ with tab_am:
                     load_today_status.clear()
                 except Exception as e:
                     st.error(f"寫入失敗：{e}")
-            st.caption("09:20 的追加／減量短訊請到戰情室複製，不用重貼這份明細。同一天再按一次會覆蓋。")
+            st.caption("每天早上都要按，下午結算和預測準確度分析會用到。同一天再按一次會覆蓋。")
         else:
             st.warning("尚未設定試算表金鑰，無法記錄送出份數。")
 
@@ -395,9 +395,9 @@ with tab_pm:
             st.caption(f"早上已記錄：總訂餐 {sent_total} 份、加購主菜 {sent_main} 份。")
         else:
             st.caption("早上沒有記錄，先用「早上訂餐」分頁目前的數字，請確認。")
-        adjust = st.number_input("09:20 追加（+）／減量（−）份數", value=0, step=1,
-                                 help="照戰情室 09:20 短訊填；沒有追加就填 0")
-        total_served = st.number_input("總供餐數（份）", min_value=0, value=max(0, sent_total + adjust), step=1)
+        # 團膳只接受早上一版，09:20 不再追加／減量；總供餐數 = 早上送出的份數（特殊狀況可直接改）
+        total_served = st.number_input("總供餐數（份）", min_value=0, value=sent_total, step=1)
+        adjust = total_served - sent_total
         main_served = st.number_input("加購主菜（份）", min_value=0, value=sent_main, step=1)
 
         counts_note = None
