@@ -25,7 +25,13 @@ def load_csv_data(url):
 ACCESS_LOG_SHEET_ID = "1VI2Iw9EACSn-v7PjTB4wCG0cLeySg97tQ9GESWdilik"
 COUNTS_SHEET = "每日刷卡統計"   # 筆電下午一條龍寫入
 TREND_SHEET = "趨勢紀錄"
-ORDER_SHEET = "團膳訂單"        # 早上送出的份數，戰情室 09:20 用來算追加／減量
+ORDER_SHEET = "團膳訂單"        # 每天一列：早上送出的份數（戰情室 09:20 用）＋加量原因、主菜、換菜、下午結算
+ORDER_HEADERS = ["日期", "戰情室第一版", "實際正常數量", "換菜折合", "方便素", "用餐人數", "總訂餐份數", "寫入時間", "加購主菜",
+                 "臨時加量", "加量原因", "主菜", "主菜類型", "換菜明細",
+                 "09:20調整", "總供餐數", "實際加購主菜", "現場付現", "便當盒", "環電", "結算寫入時間"]
+AM_COLS = ("A", "N")            # 早上按鈕寫 A~N
+PM_COLS = ("O", "U")            # 下午按鈕寫 O~U
+MAIN_TYPES = ["整塊（雞腿、排骨等，一人一塊）", "散肉（肉片、肉絲，容易多夾）"]
 # 趨勢紀錄的發佈 CSV（不需要金鑰），用來算戰情室的 08:30 第一版
 TREND_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSv8X_NJDPjSVJTEkFjdBTSJKjDnZ18eyf6yBdTBq2eVT8TB6_wB-UDUUVUoF5eUJrLSnDsqpu7OhbS/pub?gid=1825976142&single=true&output=csv"
 DASHBOARD_URL = "https://tsaitzuchien-star.github.io/CTIC_Dining_Prediction/"
@@ -73,16 +79,26 @@ def first_version_base(day):
         return FALLBACK_BASE[day.weekday()], f"固定星期基準量（趨勢紀錄讀取失敗：{e}）"
     return FALLBACK_BASE[day.weekday()], "固定星期基準量（趨勢資料不足）"
 
-def write_order(row):
-    """把早上送出的份數寫進「團膳訂單」，同一天再按一次就覆蓋"""
+def order_ws():
+    """「團膳訂單」分頁；舊表只有 A~I 欄，第一次用時自動補上新欄位標題"""
     ws = open_access_log().worksheet(ORDER_SHEET)
+    if ws.col_count < len(ORDER_HEADERS):
+        ws.add_cols(len(ORDER_HEADERS) - ws.col_count)
+    if ws.row_values(1) != ORDER_HEADERS:
+        ws.update(values=[ORDER_HEADERS], range_name="A1")
+    return ws
+
+def write_order_part(date_str, values, cols, what):
+    """把一段欄位寫進當天那列（沒有就新增），同一天再按一次就覆蓋"""
+    ws = order_ws()
     dates = ws.col_values(1)
-    if row[0] in dates:
-        r = dates.index(row[0]) + 1
-        ws.update(values=[row], range_name=f"A{r}:I{r}", value_input_option="USER_ENTERED")
-        return f"已更新 {row[0]} 的送出份數"
-    ws.append_row(row, value_input_option="USER_ENTERED")
-    return f"已記錄 {row[0]} 的送出份數"
+    if date_str in dates:
+        r = dates.index(date_str) + 1
+    else:
+        r = len(dates) + 1
+        ws.update(values=[[date_str]], range_name=f"A{r}", value_input_option="USER_ENTERED")
+    ws.update(values=[values], range_name=f"{cols[0]}{r}:{cols[1]}{r}", value_input_option="USER_ENTERED")
+    return f"已記錄 {date_str} 的{what}"
 
 @st.cache_data(ttl=120)
 def load_today_status(date_str):
@@ -200,9 +216,23 @@ with tab_am:
         st.subheader("今天要訂多少")
         first_version, first_basis = first_version_base(selected_date)
         default_base = max(0, first_version - len(normal_rice_list) - len(no_rice_list)) if first_version else 0
-        base_count = st.number_input("實際正常數量（份）", min_value=0, value=default_base, step=1)
         if first_version:
-            st.caption(f"📈 戰情室第一版 {first_version} 份（{first_basis}）− 方便素 {len(normal_rice_list) + len(no_rice_list)} 份 = {default_base}。有活動可直接改。")
+            st.metric("📈 戰情室預測（桶餐）", f"{default_base} 份",
+                      help=f"戰情室第一版 {first_version} 份（{first_basis}）− 方便素 {len(normal_rice_list) + len(no_rice_list)} 份")
+        else:
+            default_base = st.number_input("實際正常數量（份）", min_value=0, value=0, step=1,
+                                           help="今天抓不到戰情室預測，請直接填")
+        a1, a2 = st.columns([1, 2])
+        with a1:
+            temp_add = st.number_input("臨時加減量（份）", value=0, step=1,
+                                       help="施工廠商、訪客、活動等沒刷卡的人；人變少就填負數")
+        with a2:
+            temp_reason = st.text_input("原因", placeholder="例：施工廠商 5 人、外賓參訪")
+        base_count = max(0, default_base + temp_add)
+        if temp_add:
+            st.caption(f"實際正常數量：{default_base} {'+' if temp_add > 0 else '−'} {abs(temp_add)} = **{base_count} 份**")
+            if not temp_reason.strip():
+                st.warning("請寫一下加量原因，之後才看得出臨時人員的規律。")
 
         st.markdown("**🥬 方便素**（當天沒來的按 ✕ 拿掉）")
         if veg_error:
@@ -212,6 +242,7 @@ with tab_am:
 
         st.markdown("**🍱 今日菜色加購**")
         main_dish = "查無主菜"
+        main_type = ""
         extra_main_count = 0
         side_dishes = {}
         try:
@@ -224,7 +255,12 @@ with tab_am:
                 sides = [today_menu[f'配菜{i}'].values[0] for i in range(1, 5)]
                 if '星期' in today_menu.columns:
                     display_date = f"{today_str} ({today_menu['星期'].values[0]})"
-                extra_main_count = st.number_input(f"加購主菜：{main_dish}（30 元）", min_value=0, value=10, step=1)
+                m1, m2 = st.columns([3, 2])
+                with m1:
+                    main_type = st.radio(f"主菜：{main_dish}", MAIN_TYPES, horizontal=True,
+                                         help="散肉自助時容易多夾，通常要多加購；記下來之後可以算出散肉日平均要加多少")
+                with m2:
+                    extra_main_count = st.number_input("加購主菜（30 元／份）", min_value=0, value=10, step=1)
                 st.caption("配菜（10 元）依風險係數自動建議：🔴 A 級 🟡 一般 🟢 C 級保底")
                 side_cols = st.columns(2)
                 for i, side in enumerate(sides):
@@ -296,9 +332,12 @@ with tab_am:
         if has_gs_secret():
             if st.button(f"💾 已傳給團膳，記錄 {grand_total} 份", type="primary", use_container_width=True):
                 try:
-                    st.success("✅ " + write_order([today_str, first_version or "", base_count, extra_side_count, veg_total,
-                                                    base_count + veg_total, grand_total,
-                                                    datetime.now(TAIPEI).strftime("%Y-%m-%d %H:%M"), extra_main_count]))
+                    side_str = "、".join(f"{k}{v}" for k, v in side_dishes.items() if v > 0)
+                    st.success("✅ " + write_order_part(today_str, [
+                        today_str, first_version or "", base_count, extra_side_count, veg_total,
+                        base_count + veg_total, grand_total, datetime.now(TAIPEI).strftime("%Y-%m-%d %H:%M"),
+                        extra_main_count, temp_add, temp_reason.strip(), main_dish, main_type.split("（")[0], side_str,
+                    ], AM_COLS, "早上訂餐"))
                     load_today_status.clear()
                 except Exception as e:
                     st.error(f"寫入失敗：{e}")
@@ -377,13 +416,23 @@ with tab_pm:
             if st.button("🔄 重新讀取卡機統計"):
                 load_daily_counts.clear()
                 st.rerun()
+        # 卡機數字自動帶入時收起來，只有數字不對才需要打開改
+        auto = default_hd is not None
+        if auto:
+            st.markdown(f"工研院 **{default_card}** 人　環電 **{default_hd}** 人　奧鋼聯 **{default_agl}** 人")
+        with st.expander("✏️ 卡機數字不對才需要改", expanded=not auto):
+            k1, k2, k3 = st.columns(3)
+            with k1:
+                card_count = st.number_input("工研院刷卡（人）", min_value=0, value=default_card, step=1, placeholder="請填寫")
+            with k2:
+                hd_count = st.number_input("環電（人）", min_value=0, value=default_hd, step=1, placeholder="請填寫")
+            with k3:
+                agl_count = st.number_input("奧鋼聯（人）", min_value=0, value=default_agl, step=1, placeholder="請填寫")
+        st.markdown("**請填：**")
         c1, c2 = st.columns(2)
         with c1:
-            card_count = st.number_input("工研院刷卡（人）", min_value=0, value=default_card, step=1, placeholder="請填寫")
-            agl_count = st.number_input("奧鋼聯（人）", min_value=0, value=default_agl, step=1, placeholder="請填寫")
             cash_count = st.number_input("現場付現（人）", min_value=0, value=None, step=1, placeholder="請填寫")
         with c2:
-            hd_count = st.number_input("環電（人）", min_value=0, value=default_hd, step=1, placeholder="請填寫")
             box_count = st.number_input("加購外帶便當盒（組）", min_value=0, value=None, step=1, placeholder="請填寫")
 
     missing = [n for n, v in [("現場付現", cash_count), ("便當盒", box_count), ("環電", hd_count)] if v is None]
@@ -420,15 +469,19 @@ with tab_pm:
 🏢 五、 環電今日用餐人數
 * 總計：{hd_count} 人"""
             st.code(afternoon_msg, language="text")
-            # 現金份數回寫「趨勢紀錄」，戰情室的實際用餐 = 刷卡 + 現金，明天第一版會用到
+            # 現金份數回寫「趨勢紀錄」（戰情室的實際用餐 = 刷卡 + 現金，明天第一版會用到），結算數字記進「團膳訂單」
             if has_gs_secret():
-                if st.button(f"💾 把現金 {cash_count} 份寫入趨勢紀錄", type="primary", use_container_width=True):
+                if st.button(f"💾 已傳給團膳，記錄今日結算（現金 {cash_count} 份）", type="primary", use_container_width=True):
                     try:
                         st.success("✅ " + write_cash_to_trend(today_str, cash_count))
+                        st.success("✅ " + write_order_part(today_str, [
+                            adjust, total_served, main_served, cash_count, box_count, hd_count,
+                            datetime.now(TAIPEI).strftime("%Y-%m-%d %H:%M"),
+                        ], PM_COLS, "下午結算"))
                         load_today_status.clear()
                     except Exception as e:
                         st.error(f"寫入失敗：{e}")
-                st.caption("現金份數會變成明天以後第一版的計算基礎，請每天都要寫回。")
+                st.caption("現金份數會變成明天以後第一版的計算基礎，請每天都要按。")
 
 # ==========================================
 # 7. 名單與菜單
