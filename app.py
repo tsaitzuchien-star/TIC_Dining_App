@@ -25,10 +25,10 @@ def load_csv_data(url):
 ACCESS_LOG_SHEET_ID = "1VI2Iw9EACSn-v7PjTB4wCG0cLeySg97tQ9GESWdilik"
 COUNTS_SHEET = "每日刷卡統計"   # 筆電下午一條龍寫入
 TREND_SHEET = "趨勢紀錄"
-ORDER_SHEET = "團膳訂單"        # 每天一列：早上送出的份數（戰情室 09:20 用）＋加量原因、主菜、換菜、下午結算
+ORDER_SHEET = "團膳訂單"        # 每天一列：早上送出的份數＋加量原因、主菜、換菜、下午結算
 ORDER_HEADERS = ["日期", "戰情室第一版", "實際正常數量", "換菜折合", "方便素", "用餐人數", "總訂餐份數", "寫入時間", "加購主菜",
                  "臨時加量", "加量原因", "主菜", "主菜類型", "換菜明細",
-                 "09:20調整", "總供餐數", "實際加購主菜", "現場付現", "便當盒", "環電", "結算寫入時間"]
+                 "供餐調整", "總供餐數", "實際加購主菜", "現場付現", "便當盒", "環電", "結算寫入時間"]
 AM_COLS = ("A", "N")            # 早上按鈕寫 A~N
 PM_COLS = ("O", "U")            # 下午按鈕寫 O~U
 MAIN_TYPES = ["整塊（雞腿、排骨等，一人一塊）", "散肉（肉片、肉絲，容易多夾）"]
@@ -170,7 +170,7 @@ if has_gs_secret():
         else:
             st.warning("08:30 ⬜ 早上明細還沒記錄")
     with p2:
-        st.info(f"09:20 追加／減量短訊請到 [戰情室]({DASHBOARD_URL}) 複製")
+        st.info(f"📊 今日預測請看 [戰情室]({DASHBOARD_URL})")
     with p3:
         if status.get("cash"):
             st.success(f"13:00 ✅ 現金 {status['cash']} 份已寫回")
@@ -321,8 +321,7 @@ with tab_am:
 * 不要白飯 ({len(veg_no_rice)} 份)：{bullet_list(veg_no_rice)}
 
 ⚠️ 三、 廚房提醒事項
-* 🔴 請務必預留「檢體一份」
-* 📢 將視今天入園人數於 09:20 前，回報是否追加餐點與今日最終數量。追加部分放在「補菜桶」即可。"""
+* 🔴 請務必預留「檢體一份」"""
 
     with right:
         st.subheader("傳給兩個團膳群組")
@@ -330,7 +329,7 @@ with tab_am:
         st.caption("按框框右上角的 📋 圖示複製，分別貼到兩個群組。")
         st.code(morning_msg, language="text")
         if has_gs_secret():
-            if st.button(f"💾 已傳給團膳，記錄 {grand_total} 份", type="primary", use_container_width=True):
+            if st.button(f"💾 記錄今天的訂餐（{grand_total} 份）", type="primary", use_container_width=True):
                 try:
                     side_str = "、".join(f"{k}{v}" for k, v in side_dishes.items() if v > 0)
                     st.success("✅ " + write_order_part(today_str, [
@@ -341,7 +340,7 @@ with tab_am:
                     load_today_status.clear()
                 except Exception as e:
                     st.error(f"寫入失敗：{e}")
-            st.caption("09:20 的追加／減量短訊請到戰情室複製，不用重貼這份明細。同一天再按一次會覆蓋。")
+            st.caption("這個按鈕只會存紀錄，不會傳任何訊息。明細請照上面複製貼到團膳群組，貼完再按一下。下午結算和預測分析會用到，同一天再按一次會覆蓋。")
         else:
             st.warning("尚未設定試算表金鑰，無法記錄送出份數。")
 
@@ -391,14 +390,18 @@ with tab_pm:
         st.subheader("填下午數字")
         sent_total = int(order_row.get("總訂餐份數") or grand_total) if order_row else grand_total
         sent_main = int(order_row.get("加購主菜") or extra_main_count) if order_row and str(order_row.get("加購主菜", "")).strip() else extra_main_count
+        # 團膳只接受早上一版：總供餐數、加購主菜直接用早上送出的數字，特殊狀況才打開改
         if order_row:
-            st.caption(f"早上已記錄：總訂餐 {sent_total} 份、加購主菜 {sent_main} 份。")
+            st.markdown(f"總供餐 **{sent_total}** 份　加購主菜 **{sent_main}** 份（早上已記錄）")
         else:
-            st.caption("早上沒有記錄，先用「早上訂餐」分頁目前的數字，請確認。")
-        adjust = st.number_input("09:20 追加（+）／減量（−）份數", value=0, step=1,
-                                 help="照戰情室 09:20 短訊填；沒有追加就填 0")
-        total_served = st.number_input("總供餐數（份）", min_value=0, value=max(0, sent_total + adjust), step=1)
-        main_served = st.number_input("加購主菜（份）", min_value=0, value=sent_main, step=1)
+            st.warning("早上沒有按「記錄」，下面先用「早上訂餐」分頁目前的數字，請對照早上傳給團膳的明細確認。")
+        with st.expander("✏️ 份數和早上不一樣才需要改", expanded=not order_row):
+            s1, s2 = st.columns(2)
+            with s1:
+                total_served = st.number_input("總供餐數（份）", min_value=0, value=sent_total, step=1)
+            with s2:
+                main_served = st.number_input("加購主菜（份）", min_value=0, value=sent_main, step=1)
+        adjust = total_served - sent_total
 
         counts_note = None
         default_card = default_hd = default_agl = None
@@ -471,7 +474,7 @@ with tab_pm:
             st.code(afternoon_msg, language="text")
             # 現金份數回寫「趨勢紀錄」（戰情室的實際用餐 = 刷卡 + 現金，明天第一版會用到），結算數字記進「團膳訂單」
             if has_gs_secret():
-                if st.button(f"💾 已傳給團膳，記錄今日結算（現金 {cash_count} 份）", type="primary", use_container_width=True):
+                if st.button(f"💾 記錄今日結算（現金 {cash_count} 份）", type="primary", use_container_width=True):
                     try:
                         st.success("✅ " + write_cash_to_trend(today_str, cash_count))
                         st.success("✅ " + write_order_part(today_str, [
@@ -481,7 +484,7 @@ with tab_pm:
                         load_today_status.clear()
                     except Exception as e:
                         st.error(f"寫入失敗：{e}")
-                st.caption("現金份數會變成明天以後第一版的計算基礎，請每天都要按。")
+                st.caption("只會存紀錄，不會傳訊息。現金份數會變成明天以後第一版的計算基礎，請每天都要按。")
 
 # ==========================================
 # 7. 名單與菜單
