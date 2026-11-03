@@ -390,14 +390,18 @@ with tab_pm:
         st.subheader("填下午數字")
         sent_total = int(order_row.get("總訂餐份數") or grand_total) if order_row else grand_total
         sent_main = int(order_row.get("加購主菜") or extra_main_count) if order_row and str(order_row.get("加購主菜", "")).strip() else extra_main_count
+        # 團膳只接受早上一版：總供餐數、加購主菜直接用早上送出的數字，特殊狀況才打開改
         if order_row:
-            st.caption(f"早上已記錄：總訂餐 {sent_total} 份、加購主菜 {sent_main} 份。")
+            st.markdown(f"總供餐 **{sent_total}** 份　加購主菜 **{sent_main}** 份（早上已記錄）")
         else:
-            st.caption("早上沒有記錄，先用「早上訂餐」分頁目前的數字，請確認。")
-        # 團膳只接受早上一版，09:20 不再追加／減量；總供餐數 = 早上送出的份數（特殊狀況可直接改）
-        total_served = st.number_input("總供餐數（份）", min_value=0, value=sent_total, step=1)
+            st.warning("早上沒有按「記錄」，下面先用「早上訂餐」分頁目前的數字，請對照早上傳給團膳的明細確認。")
+        with st.expander("✏️ 份數和早上不一樣才需要改", expanded=not order_row):
+            s1, s2 = st.columns(2)
+            with s1:
+                total_served = st.number_input("總供餐數（份）", min_value=0, value=sent_total, step=1)
+            with s2:
+                main_served = st.number_input("加購主菜（份）", min_value=0, value=sent_main, step=1)
         adjust = total_served - sent_total
-        main_served = st.number_input("加購主菜（份）", min_value=0, value=sent_main, step=1)
 
         counts_note = None
         default_card = default_hd = default_agl = None
