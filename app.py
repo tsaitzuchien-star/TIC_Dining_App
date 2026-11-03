@@ -329,7 +329,7 @@ with tab_am:
         st.caption("按框框右上角的 📋 圖示複製，分別貼到兩個群組。")
         st.code(morning_msg, language="text")
         if has_gs_secret():
-            if st.button(f"💾 已傳給團膳，記錄 {grand_total} 份", type="primary", use_container_width=True):
+            if st.button(f"💾 記錄今天的訂餐（{grand_total} 份）", type="primary", use_container_width=True):
                 try:
                     side_str = "、".join(f"{k}{v}" for k, v in side_dishes.items() if v > 0)
                     st.success("✅ " + write_order_part(today_str, [
@@ -340,7 +340,7 @@ with tab_am:
                     load_today_status.clear()
                 except Exception as e:
                     st.error(f"寫入失敗：{e}")
-            st.caption("每天早上都要按，下午結算和預測準確度分析會用到。同一天再按一次會覆蓋。")
+            st.caption("這個按鈕只會存紀錄，不會傳任何訊息。明細請照上面複製貼到團膳群組，貼完再按一下。下午結算和預測分析會用到，同一天再按一次會覆蓋。")
         else:
             st.warning("尚未設定試算表金鑰，無法記錄送出份數。")
 
@@ -474,7 +474,7 @@ with tab_pm:
             st.code(afternoon_msg, language="text")
             # 現金份數回寫「趨勢紀錄」（戰情室的實際用餐 = 刷卡 + 現金，明天第一版會用到），結算數字記進「團膳訂單」
             if has_gs_secret():
-                if st.button(f"💾 已傳給團膳，記錄今日結算（現金 {cash_count} 份）", type="primary", use_container_width=True):
+                if st.button(f"💾 記錄今日結算（現金 {cash_count} 份）", type="primary", use_container_width=True):
                     try:
                         st.success("✅ " + write_cash_to_trend(today_str, cash_count))
                         st.success("✅ " + write_order_part(today_str, [
@@ -484,7 +484,7 @@ with tab_pm:
                         load_today_status.clear()
                     except Exception as e:
                         st.error(f"寫入失敗：{e}")
-                st.caption("現金份數會變成明天以後第一版的計算基礎，請每天都要按。")
+                st.caption("只會存紀錄，不會傳訊息。現金份數會變成明天以後第一版的計算基礎，請每天都要按。")
 
 # ==========================================
 # 7. 名單與菜單
