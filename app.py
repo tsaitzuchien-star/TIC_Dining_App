@@ -38,6 +38,18 @@ DASHBOARD_URL = "https://tsaitzuchien-star.github.io/CTIC_Dining_Prediction/"
 FALLBACK_BASE = {0: 132, 1: 128, 2: 119, 3: 126, 4: 108}   # 趨勢紀錄資料不足時的星期基準量
 BASE_LOOKBACK = 8
 
+CARD_SHEET = "新增卡片申請"     # App 送出，筆電 process_card_requests.py 處理
+CARD_HEADERS = ["申請時間", "員工編號", "姓名", "公司", "卡號", "狀態", "處理時間", "備註"]
+
+@st.cache_data(ttl=60)
+def load_card_requests():
+    try:
+        return open_access_log().worksheet(CARD_SHEET).get_all_records()
+    except Exception as e:
+        if type(e).__name__ == "WorksheetNotFound":
+            return []
+        return f"{type(e).__name__}: {e}"
+
 def has_gs_secret():
     try:
         return "gcp_service_account" in st.secrets
@@ -205,7 +217,7 @@ except Exception as e:
     def names_of(kind, default_only=False):
         return []
 
-tab_am, tab_prep, tab_pm, tab_set = st.tabs(["☀️ 早上訂餐", "🍳 備餐打飯", "💰 下午結算", "⚙️ 名單與菜單"])
+tab_am, tab_prep, tab_pm, tab_card, tab_set = st.tabs(["☀️ 早上訂餐", "🍳 備餐打飯", "💰 下午結算", "🪪 新增卡片", "⚙️ 名單與菜單"])
 
 # ==========================================
 # 4. 早上訂餐
@@ -487,7 +499,56 @@ with tab_pm:
                 st.caption("只會存紀錄，不會傳訊息。現金份數會變成明天以後第一版的計算基礎，請每天都要按。")
 
 # ==========================================
-# 7. 名單與菜單
+# 7. 新增廠商卡片：寫進「新增卡片申請」，子健筆電每 10 分鐘處理（SQL、卡機名單、主檔），完成後 LINE 回報
+# ==========================================
+with tab_card:
+    st.subheader("新增進駐廠商卡片")
+    st.caption("送出後由筆電自動寫入資料庫並更新卡機，約 10 分鐘內完成，完成會收到 LINE。"
+               "11:00～13:30 用餐時段不更新卡機，會等 13:30 後處理。")
+    if not has_gs_secret():
+        st.warning("尚未設定試算表金鑰，無法送出申請。")
+    else:
+        with st.form("card_form", clear_on_submit=True):
+            f1, f2 = st.columns(2)
+            with f1:
+                req_emp = st.text_input("員工編號", placeholder="例：CTIC-128-375")
+                req_name = st.text_input("姓名", placeholder="例：蔡起杰")
+            with f2:
+                req_comp = st.text_input("公司", placeholder="例：環電")
+                req_card = st.text_input("卡號（10 碼）", placeholder="例：2510440043")
+            submitted = st.form_submit_button("📨 送出申請", type="primary")
+        if submitted:
+            emp, name, comp, card = (s.strip() for s in (req_emp, req_name, req_comp, req_card))
+            problems = [m for ok, m in [(emp, "員工編號"), (name, "姓名"), (comp, "公司"),
+                                         (card.isdigit() and 8 <= len(card) <= 10, "卡號（要 8～10 位數字）")] if not ok]
+            if problems:
+                st.error(f"請確認：{'、'.join(problems)}")
+            else:
+                try:
+                    book = open_access_log()
+                    try:
+                        ws = book.worksheet(CARD_SHEET)
+                    except Exception:
+                        ws = book.add_worksheet(title=CARD_SHEET, rows=500, cols=len(CARD_HEADERS))
+                        ws.update(values=[CARD_HEADERS], range_name="A1")
+                    ws.append_row([datetime.now(TAIPEI).strftime("%Y-%m-%d %H:%M"), emp.replace("_", "-"), name, comp,
+                                   card, "待處理", "", ""], value_input_option="RAW")
+                    st.success(f"✅ 已送出：{comp} {name}（{emp}），卡號 {card}。完成後會收到 LINE。")
+                    load_card_requests.clear()
+                except Exception as e:
+                    st.error(f"送出失敗：{e}")
+        reqs = load_card_requests()
+        if isinstance(reqs, list) and reqs:
+            st.markdown("**最近的申請**")
+            st.dataframe(pd.DataFrame(reqs[-10:][::-1]), hide_index=True, use_container_width=True)
+        elif isinstance(reqs, str):
+            st.caption(f"⚠️ 讀不到申請紀錄：{reqs}")
+        if st.button("🔄 重新整理狀態"):
+            load_card_requests.clear()
+            st.rerun()
+
+# ==========================================
+# 8. 名單與菜單
 # ==========================================
 with tab_set:
     st.subheader("名單維護")
