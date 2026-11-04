@@ -263,13 +263,10 @@ with tab_am:
             temp_add = st.number_input("臨時加減量（份）", value=0, step=1,
                                        help="施工廠商、訪客、活動等沒刷卡的人；人變少就填負數")
         with a2:
-            r1, r2 = st.columns([1, 1])
-            with r1:
-                reason_pick = st.selectbox("原因", ["", "進園人數比預測多", "進園人數比預測少", "施工廠商／臨時人員",
-                                                    "活動、外賓參訪", "部門開會訂便當（減）", "其他"])
-            with r2:
-                reason_note = st.text_input("補充", placeholder="例：施工 5 人", label_visibility="hidden")
-            temp_reason = "：".join(s for s in (reason_pick, reason_note.strip()) if s)
+            reason_pick = st.selectbox("原因", ["", "進園人數比預測多", "進園人數比預測少", "施工廠商／臨時人員",
+                                                "活動、外賓參訪", "部門開會訂便當（減）", "其他"])
+        reason_note = st.text_input("補充說明（選填）", placeholder="例：施工 5 人") if temp_add else ""
+        temp_reason = "：".join(s for s in (reason_pick, reason_note.strip()) if s)
         base_count = max(0, default_base + temp_add)
         if temp_add:
             st.caption(f"實際正常數量：{default_base} {'+' if temp_add > 0 else '−'} {abs(temp_add)} = **{base_count} 份**")
