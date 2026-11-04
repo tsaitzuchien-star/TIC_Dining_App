@@ -50,6 +50,30 @@ def load_card_requests():
             return []
         return f"{type(e).__name__}: {e}"
 
+VEG_LOG_SHEET = "素食訂購紀錄"   # 每天每人一列，統計素食訂購（含臨時加訂）
+VEG_LOG_HEADERS = ["日期", "姓名", "飯量", "名單內"]
+
+def split_names(s):
+    import re
+    return [n.strip() for n in re.split(r"[、,，\s]+", s or "") if n.strip()]
+
+def write_veg_log(date_str, people, listed):
+    """把當天的方便素名單寫進「素食訂購紀錄」，同一天再按一次會整天重寫"""
+    book = open_access_log()
+    try:
+        ws = book.worksheet(VEG_LOG_SHEET)
+    except Exception:
+        ws = book.add_worksheet(title=VEG_LOG_SHEET, rows=2000, cols=len(VEG_LOG_HEADERS))
+        ws.update(values=[VEG_LOG_HEADERS], range_name="A1")
+    dates = ws.col_values(1)
+    for r in sorted((i + 1 for i, d in enumerate(dates) if d == date_str), reverse=True):
+        ws.delete_rows(r)
+    if people:
+        ws.append_rows([[date_str, n, rice, "是" if n in listed else "否（臨時）"] for n, rice in people],
+                       value_input_option="RAW")
+    temp = sum(n not in listed for n, _ in people)
+    return f"已記錄素食 {len(people)} 位" + (f"（臨時加訂 {temp} 位）" if temp else "")
+
 def has_gs_secret():
     try:
         return "gcp_service_account" in st.secrets
@@ -251,6 +275,14 @@ with tab_am:
             st.warning(f"⚠️ 方便素名單載入失敗，請手動確認。{veg_error}")
         veg_normal = st.multiselect("正常飯", options=normal_rice_list, default=normal_rice_list)
         veg_no_rice = st.multiselect("不要白飯", options=no_rice_list, default=no_rice_list)
+        t1, t2 = st.columns(2)
+        with t1:
+            temp_veg_normal = split_names(st.text_input("➕ 臨時加訂・正常飯", placeholder="不在名單的人，多人用、隔開"))
+        with t2:
+            temp_veg_no_rice = split_names(st.text_input("➕ 臨時加訂・不要白飯", placeholder="例：王小明、陳大華"))
+        veg_listed = set(veg_normal) | set(veg_no_rice)
+        veg_normal = veg_normal + [n for n in temp_veg_normal if n not in veg_listed]
+        veg_no_rice = veg_no_rice + [n for n in temp_veg_no_rice if n not in veg_listed]
 
         st.markdown("**🍱 今日菜色加購**")
         main_dish = "查無主菜"
@@ -349,6 +381,9 @@ with tab_am:
                         base_count + veg_total, grand_total, datetime.now(TAIPEI).strftime("%Y-%m-%d %H:%M"),
                         extra_main_count, temp_add, temp_reason.strip(), main_dish, main_type.split("（")[0], side_str,
                     ], AM_COLS, "早上訂餐"))
+                    st.success("✅ " + write_veg_log(today_str, [(n, "正常飯") for n in veg_normal] +
+                                                     [(n, "不要白飯") for n in veg_no_rice],
+                                                     set(normal_rice_list) | set(no_rice_list)))
                     load_today_status.clear()
                 except Exception as e:
                     st.error(f"寫入失敗：{e}")
@@ -557,6 +592,18 @@ with tab_set:
   - 方便素：「姓名、飯量偏好（正常飯／不要白飯）」
   - 外帶餐盤名單：「姓名、類別（葷食外帶／餐盤）、每天預設帶入（是／否）」
 """)
+    if has_gs_secret():
+        with st.expander("🥬 素食訂購統計（近 30 天）"):
+            try:
+                v = pd.DataFrame(open_access_log().worksheet(VEG_LOG_SHEET).get_all_records())
+                v = v[pd.to_datetime(v["日期"]) >= pd.Timestamp(selected_date) - pd.Timedelta(days=30)]
+                st.markdown(f"每天平均 **{v.groupby('日期').size().mean():.1f}** 份，其中臨時加訂 "
+                            f"**{(v['名單內'] != '是').sum()}** 人次")
+                stat = v.groupby(["姓名", "名單內"]).size().reset_index(name="訂購天數").sort_values("訂購天數", ascending=False)
+                st.dataframe(stat, hide_index=True, use_container_width=True)
+                st.caption("臨時加訂次數多的人，可以加進上面的方便素名單，每天就會自動帶入。")
+            except Exception as e:
+                st.caption(f"還沒有統計資料（{type(e).__name__}）")
     if st.button("🔄 立即重新讀取名單與菜單"):
         load_csv_data.clear()
         st.rerun()
