@@ -53,19 +53,21 @@ def load_card_requests():
 FORGOT_SHEET = "忘記帶卡補登"   # App 送出，筆電 process_card_requests.py 寫進 Vendor_Access
 FORGOT_HEADERS = ["申請時間", "用餐日期", "員工編號", "姓名", "公司", "狀態", "處理時間", "備註"]
 
-def forgot_ws():
+CANCEL_SHEET = "刷卡取消"       # 刷卡後沒吃到：筆電把那筆從 Vendor_Access 移到 Vendor_Access_Cancelled
+
+def forgot_ws(sheet=FORGOT_SHEET):
     book = open_access_log()
     try:
-        return book.worksheet(FORGOT_SHEET)
+        return book.worksheet(sheet)
     except Exception:
-        ws = book.add_worksheet(title=FORGOT_SHEET, rows=1000, cols=len(FORGOT_HEADERS))
+        ws = book.add_worksheet(title=sheet, rows=1000, cols=len(FORGOT_HEADERS))
         ws.update(values=[FORGOT_HEADERS], range_name="A1")
         return ws
 
 @st.cache_data(ttl=60)
-def load_forgot_requests():
+def load_forgot_requests(sheet=FORGOT_SHEET):
     try:
-        return open_access_log().worksheet(FORGOT_SHEET).get_all_records()
+        return open_access_log().worksheet(sheet).get_all_records()
     except Exception as e:
         return [] if type(e).__name__ == "WorksheetNotFound" else f"{type(e).__name__}: {e}"
 
@@ -619,9 +621,14 @@ with tab_card:
 
     # ---- 忘記帶卡人工補登（只限廠商，例如環電；寫進本機 Vendor_Access，月結請款會算到）----
     st.divider()
-    st.subheader("忘記帶卡・人工補登")
-    st.caption("廠商同仁（例如環電）忘記帶卡、沒刷到卡時在這裡補登，月底請款單會算進去。可以補前幾天的。"
-               "工研院同仁不能在這裡補，要走院部流程。")
+    st.subheader("廠商用餐補登／取消")
+    st.caption("只限園區廠商（例如環電），工研院同仁要走院部流程。可以處理前幾天的。")
+    fg_mode = st.radio("要做什麼", ["📝 補登：忘記帶卡，有吃沒刷到", "🚫 取消：有刷卡，但沒吃到（例如菜沒了）"],
+                       horizontal=True)
+    cancel = fg_mode.startswith("🚫")
+    fg_sheet, fg_word = (CANCEL_SHEET, "取消") if cancel else (FORGOT_SHEET, "補登")
+    st.caption("取消後，那天那一筆刷卡會從月結請款單拿掉（筆電會另外留紀錄）。" if cancel
+               else "補登後，每人那天記一筆 80 元，月底請款單會算進去。")
     if has_gs_secret():
         people = load_vendor_people()
         if isinstance(people, str):
@@ -638,27 +645,27 @@ with tab_card:
                     fg_people = st.multiselect("姓名（可打姓名、員工編號後三碼或卡號搜尋，可選多人）", list(opts))
                 with g3:
                     fg_date = st.date_input("用餐日期", value=current_time.date(), max_value=current_time.date())
-                fg_note = st.text_input("備註（選填）", placeholder="例：忘記帶卡，現場登記")
-                fg_submit = st.form_submit_button("📨 送出補登", type="primary")
+                fg_note = st.text_input("備註（選填）", placeholder="例：菜沒了，沒吃到" if cancel else "例：忘記帶卡，現場登記")
+                fg_submit = st.form_submit_button(f"📨 送出{fg_word}", type="primary")
             if fg_submit:
                 if not fg_people:
-                    st.error("請選擇要補登的人。")
+                    st.error(f"請選擇要{fg_word}的人。")
                 else:
                     try:
-                        ws = forgot_ws()
+                        ws = forgot_ws(fg_sheet)
                         now_s = datetime.now(TAIPEI).strftime("%Y-%m-%d %H:%M")
                         rows = []
                         for o in fg_people:
                             p = opts[o]
                             rows.append([now_s, f"{fg_date:%Y-%m-%d}", p["員工編號"], p["姓名"], fg_comp, "待處理", "", fg_note.strip()])
                         ws.append_rows(rows, value_input_option="RAW")
-                        st.success(f"✅ 已送出 {fg_date:%m/%d} 補登 {len(rows)} 位，約 10 分鐘內寫入，完成會收到 LINE。")
+                        st.success(f"✅ 已送出 {fg_date:%m/%d} {fg_word} {len(rows)} 位，約 10 分鐘內處理，完成會收到 LINE。")
                         load_forgot_requests.clear()
                     except Exception as e:
                         st.error(f"送出失敗：{e}")
-            fr = load_forgot_requests()
+            fr = load_forgot_requests(fg_sheet)
             if isinstance(fr, list) and fr:
-                st.markdown("**最近的補登**")
+                st.markdown(f"**最近的{fg_word}**")
                 st.dataframe(pd.DataFrame(fr[-10:][::-1]), hide_index=True, use_container_width=True)
 
 # ==========================================
