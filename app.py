@@ -77,7 +77,8 @@ def load_vendor_people():
     except Exception as e:
         return f"{type(e).__name__}: {e}"
     norm = lambda c: "環電" if "環電" in c else (c or "未分類")   # 主檔裡「環電」「環電股份有限公司」併成一家
-    return sorted(({"員工編號": str(r["員工編號"]), "姓名": str(r["姓名"]).strip(), "公司": norm(str(r["公司"]).strip())}
+    return sorted(({"員工編號": str(r["員工編號"]), "姓名": str(r["姓名"]).strip(), "公司": norm(str(r["公司"]).strip()),
+                    "卡號": str(r.get("卡號", "")).strip()}
                    for r in rows if str(r.get("員工編號", "")).startswith("CTIC")), key=lambda p: p["姓名"])
 
 VEG_LOG_SHEET = "素食訂購紀錄"   # 每天每人一列，統計素食訂購（含臨時加訂）
@@ -632,8 +633,9 @@ with tab_card:
             with st.form("forgot_form", clear_on_submit=True):
                 g2, g3 = st.columns([3, 2])
                 with g2:
-                    opts = [f"{p['姓名']}（{p['員工編號']}）" for p in people if p["公司"] == fg_comp]
-                    fg_people = st.multiselect("姓名（可選多人，可打字搜尋）", opts)
+                    # 選項含員工編號與卡號，可以打姓名、員工編號後三碼或卡號搜尋
+                    opts = {f"{p['姓名']}｜{p['員工編號']}｜卡號 {p['卡號']}": p for p in people if p["公司"] == fg_comp}
+                    fg_people = st.multiselect("姓名（可打姓名、員工編號後三碼或卡號搜尋，可選多人）", list(opts))
                 with g3:
                     fg_date = st.date_input("用餐日期", value=current_time.date(), max_value=current_time.date())
                 fg_note = st.text_input("備註（選填）", placeholder="例：忘記帶卡，現場登記")
@@ -647,8 +649,8 @@ with tab_card:
                         now_s = datetime.now(TAIPEI).strftime("%Y-%m-%d %H:%M")
                         rows = []
                         for o in fg_people:
-                            name, emp = o.rsplit("（", 1)
-                            rows.append([now_s, f"{fg_date:%Y-%m-%d}", emp.rstrip("）"), name, fg_comp, "待處理", "", fg_note.strip()])
+                            p = opts[o]
+                            rows.append([now_s, f"{fg_date:%Y-%m-%d}", p["員工編號"], p["姓名"], fg_comp, "待處理", "", fg_note.strip()])
                         ws.append_rows(rows, value_input_option="RAW")
                         st.success(f"✅ 已送出 {fg_date:%m/%d} 補登 {len(rows)} 位，約 10 分鐘內寫入，完成會收到 LINE。")
                         load_forgot_requests.clear()
