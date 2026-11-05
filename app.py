@@ -80,7 +80,8 @@ def load_card_requests():
 FORGOT_SHEET = "忘記帶卡補登"   # App 送出，筆電 process_card_requests.py 寫進 Vendor_Access
 FORGOT_HEADERS = ["申請時間", "用餐日期", "員工編號", "姓名", "公司", "狀態", "處理時間", "備註"]
 
-CANCEL_SHEET = "刷卡取消"       # 刷卡後沒吃到：筆電把那筆從 Vendor_Access 移到 Vendor_Access_Cancelled
+RENAME_SHEET = "姓名更正"       # 與補登同欄位：姓名欄放「正確姓名」，備註放「原姓名：xxx」
+CANCEL_SHEET = "刷卡取消"      # 刷卡後沒吃到：筆電把那筆從 Vendor_Access 移到 Vendor_Access_Cancelled
 
 def forgot_ws(sheet=FORGOT_SHEET):
     book = open_access_log()
@@ -703,6 +704,44 @@ with tab_card:
             if isinstance(fr, list) and fr:
                 st.markdown(f"**最近的{fg_word}**")
                 st.dataframe(pd.DataFrame(fr[-10:][::-1]), hide_index=True, use_container_width=True)
+
+    # ---- 姓名更正：廠商同仁建檔打錯字，連過去用餐紀錄、卡機名單一起改 ----
+    st.divider()
+    st.subheader("姓名更正")
+    st.caption("輸入員工編號、後三碼或卡號找人，確認目前登記的姓名；打錯就填正確姓名送出。"
+               "筆電會一併更正資料庫、過去所有用餐紀錄（日報、月報）、卡機名單與員工主檔。只限園區廠商。")
+    if has_gs_secret():
+        people_all = load_vendor_people()
+        if isinstance(people_all, list):
+            nm_opts = {f"{p['姓名']}｜{p['員工編號']}｜{p['公司']}｜卡號 {p['卡號']}": p for p in people_all}
+            nm_pick = st.selectbox("找人（打員工編號、後三碼、卡號或姓名）", [""] + list(nm_opts))
+            if nm_pick:
+                p = nm_opts[nm_pick]
+                i1, i2, i3 = st.columns(3)
+                i1.metric("目前登記姓名", p["姓名"])
+                i2.metric("員工編號", p["員工編號"])
+                i3.metric("卡號", p["卡號"] or "—")
+                with st.form("rename_form", clear_on_submit=True):
+                    new_name = st.text_input("正確姓名", placeholder="例：陳靜萍")
+                    nm_submit = st.form_submit_button("✏️ 送出更正", type="primary")
+                if nm_submit:
+                    nn = new_name.strip()
+                    if not nn or nn == p["姓名"]:
+                        st.error("請輸入和目前不同的正確姓名。")
+                    else:
+                        try:
+                            forgot_ws(RENAME_SHEET).append_row(
+                                [datetime.now(TAIPEI).strftime("%Y-%m-%d %H:%M"), "", p["員工編號"], nn, p["公司"],
+                                 "待處理", "", f"原姓名：{p['姓名']}"], value_input_option="RAW")
+                            st.success(f"✅ 已送出：{p['姓名']} → {nn}，約 10 分鐘內更正，完成會收到 LINE。")
+                            load_forgot_requests.clear()
+                        except Exception as e:
+                            st.error(f"送出失敗：{e}")
+            rr = load_forgot_requests(RENAME_SHEET)
+            if isinstance(rr, list) and rr:
+                st.markdown("**最近的更正**")
+                st.dataframe(pd.DataFrame(rr[-10:][::-1]).drop(columns=["用餐日期"], errors="ignore"),
+                             hide_index=True, use_container_width=True)
 
 # ==========================================
 # 8. 名單與菜單
