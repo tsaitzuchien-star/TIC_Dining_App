@@ -50,6 +50,36 @@ def load_card_requests():
             return []
         return f"{type(e).__name__}: {e}"
 
+FORGOT_SHEET = "忘記帶卡補登"   # App 送出，筆電 process_card_requests.py 寫進 Vendor_Access
+FORGOT_HEADERS = ["申請時間", "用餐日期", "員工編號", "姓名", "公司", "狀態", "處理時間", "備註"]
+
+def forgot_ws():
+    book = open_access_log()
+    try:
+        return book.worksheet(FORGOT_SHEET)
+    except Exception:
+        ws = book.add_worksheet(title=FORGOT_SHEET, rows=1000, cols=len(FORGOT_HEADERS))
+        ws.update(values=[FORGOT_HEADERS], range_name="A1")
+        return ws
+
+@st.cache_data(ttl=60)
+def load_forgot_requests():
+    try:
+        return open_access_log().worksheet(FORGOT_SHEET).get_all_records()
+    except Exception as e:
+        return [] if type(e).__name__ == "WorksheetNotFound" else f"{type(e).__name__}: {e}"
+
+@st.cache_data(ttl=600)
+def load_vendor_people():
+    """員工與常客主檔裡的廠商同仁（員工編號 CTIC- 開頭），補登用"""
+    try:
+        rows = open_access_log().worksheet("員工與常客主檔").get_all_records()
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+    norm = lambda c: "環電" if "環電" in c else (c or "未分類")   # 主檔裡「環電」「環電股份有限公司」併成一家
+    return sorted(({"員工編號": str(r["員工編號"]), "姓名": str(r["姓名"]).strip(), "公司": norm(str(r["公司"]).strip())}
+                   for r in rows if str(r.get("員工編號", "")).startswith("CTIC")), key=lambda p: p["姓名"])
+
 VEG_LOG_SHEET = "素食訂購紀錄"   # 每天每人一列，統計素食訂購（含臨時加訂）
 VEG_LOG_HEADERS = ["日期", "姓名", "飯量", "名單內"]
 
@@ -241,7 +271,7 @@ except Exception as e:
     def names_of(kind, default_only=False):
         return []
 
-tab_am, tab_prep, tab_pm, tab_card, tab_set = st.tabs(["☀️ 早上訂餐", "🍳 備餐打飯", "💰 下午結算", "🪪 新增卡片", "⚙️ 名單與菜單"])
+tab_am, tab_prep, tab_pm, tab_card, tab_set = st.tabs(["☀️ 早上訂餐", "🍳 備餐打飯", "💰 下午結算", "🪪 卡片／補登", "⚙️ 名單與菜單"])
 
 # ==========================================
 # 4. 早上訂餐
@@ -583,7 +613,51 @@ with tab_card:
             st.caption(f"⚠️ 讀不到申請紀錄：{reqs}")
         if st.button("🔄 重新整理狀態"):
             load_card_requests.clear()
+            load_forgot_requests.clear()
             st.rerun()
+
+    # ---- 忘記帶卡人工補登（只限廠商，例如環電；寫進本機 Vendor_Access，月結請款會算到）----
+    st.divider()
+    st.subheader("忘記帶卡・人工補登")
+    st.caption("廠商同仁（例如環電）忘記帶卡、沒刷到卡時在這裡補登，月底請款單會算進去。可以補前幾天的。"
+               "工研院同仁不能在這裡補，要走院部流程。")
+    if has_gs_secret():
+        people = load_vendor_people()
+        if isinstance(people, str):
+            st.warning(f"讀不到員工名單：{people}")
+        else:
+            comps = sorted({p["公司"] for p in people})
+            # 公司放在表單外面，換公司時姓名選單才會跟著更新
+            fg_comp = st.selectbox("公司", comps, index=next((i for i, c in enumerate(comps) if "環電" in c), 0))
+            with st.form("forgot_form", clear_on_submit=True):
+                g2, g3 = st.columns([3, 2])
+                with g2:
+                    opts = [f"{p['姓名']}（{p['員工編號']}）" for p in people if p["公司"] == fg_comp]
+                    fg_people = st.multiselect("姓名（可選多人，可打字搜尋）", opts)
+                with g3:
+                    fg_date = st.date_input("用餐日期", value=current_time.date(), max_value=current_time.date())
+                fg_note = st.text_input("備註（選填）", placeholder="例：忘記帶卡，現場登記")
+                fg_submit = st.form_submit_button("📨 送出補登", type="primary")
+            if fg_submit:
+                if not fg_people:
+                    st.error("請選擇要補登的人。")
+                else:
+                    try:
+                        ws = forgot_ws()
+                        now_s = datetime.now(TAIPEI).strftime("%Y-%m-%d %H:%M")
+                        rows = []
+                        for o in fg_people:
+                            name, emp = o.rsplit("（", 1)
+                            rows.append([now_s, f"{fg_date:%Y-%m-%d}", emp.rstrip("）"), name, fg_comp, "待處理", "", fg_note.strip()])
+                        ws.append_rows(rows, value_input_option="RAW")
+                        st.success(f"✅ 已送出 {fg_date:%m/%d} 補登 {len(rows)} 位，約 10 分鐘內寫入，完成會收到 LINE。")
+                        load_forgot_requests.clear()
+                    except Exception as e:
+                        st.error(f"送出失敗：{e}")
+            fr = load_forgot_requests()
+            if isinstance(fr, list) and fr:
+                st.markdown("**最近的補登**")
+                st.dataframe(pd.DataFrame(fr[-10:][::-1]), hide_index=True, use_container_width=True)
 
 # ==========================================
 # 8. 名單與菜單
