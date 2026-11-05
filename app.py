@@ -9,7 +9,34 @@ TAIPEI = ZoneInfo("Asia/Taipei")
 # ==========================================
 # 0. 網頁基本設定 & 快取功能 (🌟 解決 409 衝突的核心)
 # ==========================================
-st.set_page_config(page_title="中創園區訂餐 App", page_icon="🍱", layout="wide")
+APP_NAME = "中創園區 餐廳管理平台"
+st.set_page_config(page_title=APP_NAME, page_icon="🍱", layout="wide")
+
+APP_CSS = """<style>
+.block-container{padding-top:2.2rem;max-width:1400px}
+.hero{display:flex;gap:14px;align-items:center;padding:6px 0 2px}
+.hero-icon{font-size:40px;width:64px;height:64px;border-radius:16px;background:linear-gradient(135deg,#ffedd5,#fed7aa);
+  display:flex;align-items:center;justify-content:center}
+.hero-title{font-size:30px;font-weight:800;letter-spacing:.5px;color:#1f2937}
+.hero-sub{font-size:14px;color:#6b7280;margin-top:2px}
+.hero-sub a{color:#c2410c;text-decoration:none;font-weight:600}
+.scards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:14px 0 6px}
+.scard{border-radius:14px;padding:12px 16px;border:1px solid #e5e7eb;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04);
+  border-left:6px solid #9ca3af}
+.scard.ok{border-left-color:#16a34a;background:#f0fdf4}
+.scard.todo{border-left-color:#f59e0b;background:#fffbeb}
+.scard.info{border-left-color:#ea580c;background:#fff7ed}
+.s-time{font-size:12px;color:#6b7280;font-family:ui-monospace,monospace}
+.s-title{font-size:14px;font-weight:700;color:#374151;margin-top:2px}
+.s-value{font-size:24px;font-weight:800;color:#111827;margin:2px 0}
+.s-value a{color:#c2410c;text-decoration:none;font-size:18px}
+.s-note{font-size:12px;color:#6b7280}
+.stTabs [data-baseweb="tab-list"]{gap:6px;border-bottom:2px solid #f3f4f6}
+.stTabs [data-baseweb="tab"]{font-size:16px;font-weight:600;padding:10px 18px;border-radius:10px 10px 0 0}
+.stTabs [aria-selected="true"]{background:#fff7ed}
+h3{color:#1f2937}
+@media (max-width:900px){.scards{grid-template-columns:repeat(2,minmax(0,1fr))}.hero-title{font-size:22px}}
+</style>"""
 
 # 🌟 新增快取機制：把下載下來的資料暫存 600 秒 (10 分鐘)
 # 這樣就算您在網頁上狂點數字，也不會重複去向 Google 要資料而被阻擋！
@@ -218,10 +245,13 @@ def bullet_list(names):
 # ==========================================
 # 2. 標題、日期、今日進度
 # ==========================================
-col_title, col_date = st.columns([3, 1])
+st.markdown(APP_CSS, unsafe_allow_html=True)
+col_title, col_date = st.columns([4, 1], vertical_alignment="bottom")
 with col_title:
-    st.title("🍱 中創園區訂餐 App")
-    st.markdown(f"今日份數由 [📊 用餐預測戰情室]({DASHBOARD_URL}) 自動帶入，這裡負責排明細、傳 LINE。")
+    st.markdown(f"""<div class="hero"><div class="hero-icon">🍱</div><div>
+<div class="hero-title">{APP_NAME}</div>
+<div class="hero-sub">訂餐 · 備餐 · 結算 · 卡片管理｜今日份數由 <a href="{DASHBOARD_URL}" target="_blank">📊 用餐預測戰情室</a> 自動帶入</div>
+</div></div>""", unsafe_allow_html=True)
 with col_date:
     selected_date = st.date_input("📅 日期", value=current_time.date())
 today_str = selected_date.strftime("%Y-%m-%d")
@@ -232,19 +262,25 @@ is_friday = selected_date.weekday() == 4
 status = load_today_status(today_str) if has_gs_secret() else {}
 order_row = status.get("order")
 if has_gs_secret():
-    p1, p2, p3 = st.columns(3)
-    with p1:
-        if order_row:
-            st.success(f"08:30 ✅ 已記錄送出 {order_row.get('總訂餐份數', '')} 份（{str(order_row.get('寫入時間', ''))[-5:]}）")
-        else:
-            st.warning("08:30 ⬜ 早上明細還沒記錄")
-    with p2:
-        st.info(f"📊 今日預測請看 [戰情室]({DASHBOARD_URL})")
-    with p3:
-        if status.get("cash"):
-            st.success(f"13:00 ✅ 現金 {status['cash']} 份已寫回")
-        else:
-            st.warning("13:00 ⬜ 下午現金還沒寫回")
+    counts_top = load_daily_counts(today_str)
+    def card(time_, title, value, note, ok):
+        cls = "ok" if ok is True else ("todo" if ok is False else "info")
+        return (f'<div class="scard {cls}"><div class="s-time">{time_}</div><div class="s-title">{title}</div>'
+                f'<div class="s-value">{value}</div><div class="s-note">{note}</div></div>')
+    cards = [
+        card("08:30", "早上訂餐",
+             f"{order_row.get('總訂餐份數', '')} 份" if order_row else "還沒記錄",
+             f"記錄於 {str(order_row.get('寫入時間', ''))[-5:]}" if order_row else "傳完團膳記得按「記錄」", bool(order_row)),
+        card("13:10", "卡機刷卡",
+             f"{counts_top.get('刷卡總數', '')} 筆" if isinstance(counts_top, dict) else "等卡機資料",
+             f"環電 {counts_top.get('環電', '')}・工研院 {counts_top.get('工研院', '')}" if isinstance(counts_top, dict)
+             else "13:10 自動上傳", True if isinstance(counts_top, dict) else None),
+        card("13:30", "下午結算",
+             f"現金 {status['cash']} 份" if status.get("cash") else "還沒記錄",
+             "已寫回趨勢紀錄" if status.get("cash") else "填現金、便當盒後按「記錄」", bool(status.get("cash"))),
+        card("即時", "用餐預測", f'<a href="{DASHBOARD_URL}" target="_blank">開啟戰情室 ↗</a>', "常客進園、派單量、命中率", None),
+    ]
+    st.markdown(f'<div class="scards">{"".join(cards)}</div>', unsafe_allow_html=True)
 if status.get("error"):
     st.caption(f"⚠️ 今日進度讀取失敗：{status['error']}")
 if is_friday:
