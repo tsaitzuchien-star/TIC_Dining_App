@@ -13,7 +13,7 @@ APP_NAME = "中創園區 餐廳管理平台"
 st.set_page_config(page_title=APP_NAME, page_icon="🍱", layout="wide")
 
 APP_CSS = """<style>
-.block-container{padding-top:2.2rem;max-width:1400px}
+.block-container{padding-top:3.6rem;max-width:1400px}   /* 留空間給上方工具列，日期標籤才不會被切到 */
 .hero{display:flex;gap:14px;align-items:center;padding:6px 0 2px}
 .hero-icon{font-size:40px;width:64px;height:64px;border-radius:16px;background:linear-gradient(135deg,#ffedd5,#fed7aa);
   display:flex;align-items:center;justify-content:center}
