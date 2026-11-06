@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import math
+import re
 
 TAIPEI = ZoneInfo("Asia/Taipei")
 
@@ -111,8 +112,17 @@ def load_vendor_people():
                     "卡號": str(r.get("卡號", "")).strip()}
                    for r in rows if str(r.get("員工編號", "")).startswith("CTIC")), key=lambda p: p["姓名"])
 
+FIXED_PLATE = ["高健維", "林盛郎"]   # 現場餐盤每天固定用餐（請假時在畫面上拿掉）
 VEG_LOG_SHEET = "素食訂購紀錄"   # 每天每人一列，統計素食訂購（含臨時加訂）
 VEG_LOG_HEADERS = ["日期", "姓名", "飯量", "名單內"]
+
+@st.cache_data(ttl=120)
+def load_veg_log(date_str):
+    """當天記錄的方便素名單（重開網頁時帶回用）"""
+    try:
+        return [r for r in open_access_log().worksheet(VEG_LOG_SHEET).get_all_records() if str(r.get("日期")) == date_str]
+    except Exception:
+        return []
 
 def split_names(s):
     import re
@@ -320,8 +330,23 @@ with tab_am:
     left, right = st.columns([5, 6], gap="large")
     with left:
         st.subheader("今天要訂多少")
+        # 早上已按「記錄」：重開網頁時自動帶回當時送出的內容（臨時加量、原因、主菜、換菜、方便素）
+        rec = order_row or {}
+        def rec_int(k, d=0):
+            try:
+                return int(str(rec.get(k, "")).strip())
+            except ValueError:
+                return d
+        rec_reason = str(rec.get("加量原因", "")).split("：", 1) if rec else [""]
+        rec_sides = dict(re.match(r"^(.*?)(\d+)$", s).groups() for s in str(rec.get("換菜明細", "")).split("、")
+                         if re.match(r"^(.*?)(\d+)$", s))
+        rec_veg = load_veg_log(today_str) if rec else []
+        if rec:
+            st.success(f"已帶入早上 {str(rec.get('寫入時間', ''))[-5:]} 記錄的內容（{rec.get('總訂餐份數', '')} 份），要改直接修改再按一次記錄。")
         first_version, first_basis = first_version_base(selected_date)
         default_base = max(0, first_version - len(normal_rice_list) - len(no_rice_list)) if first_version else 0
+        if rec and rec_int("實際正常數量", -1) >= 0:
+            default_base = rec_int("實際正常數量") - rec_int("臨時加量")   # 以早上記錄為準，避免預測值事後變動
         if first_version:
             st.metric("📈 戰情室預測（桶餐）", f"{default_base} 份",
                       help=f"戰情室第一版 {first_version} 份（{first_basis}）− 方便素 {len(normal_rice_list) + len(no_rice_list)} 份")
@@ -330,12 +355,14 @@ with tab_am:
                                            help="今天抓不到戰情室預測，請直接填")
         a1, a2 = st.columns([1, 2])
         with a1:
-            temp_add = st.number_input("臨時加減量（份）", value=0, step=1,
+            temp_add = st.number_input("臨時加減量（份）", value=rec_int("臨時加量"), step=1, key=f"temp_add_{today_str}",
                                        help="施工廠商、訪客、活動等沒刷卡的人；人變少就填負數")
         with a2:
-            reason_pick = st.selectbox("原因", ["", "進園人數比預測多", "進園人數比預測少", "施工廠商／臨時人員",
-                                                "活動、外賓參訪", "部門開會訂便當（減）", "其他"])
-        reason_note = st.text_input("補充說明（選填）", placeholder="例：施工 5 人") if temp_add else ""
+            reasons = ["", "進園人數比預測多", "進園人數比預測少", "施工廠商／臨時人員", "活動、外賓參訪", "部門開會訂便當（減）", "其他"]
+            reason_pick = st.selectbox("原因", reasons, key=f"reason_{today_str}",
+                                       index=reasons.index(rec_reason[0]) if rec_reason[0] in reasons else 0)
+        reason_note = st.text_input("補充說明（選填）", placeholder="例：施工 5 人", key=f"reason_note_{today_str}",
+                                    value=rec_reason[1] if len(rec_reason) > 1 else "") if temp_add else ""
         temp_reason = "：".join(s for s in (reason_pick, reason_note.strip()) if s)
         base_count = max(0, default_base + temp_add)
         if temp_add:
@@ -346,13 +373,19 @@ with tab_am:
         st.markdown("**🥬 方便素**（當天沒來的按 ✕ 拿掉）")
         if veg_error:
             st.warning(f"⚠️ 方便素名單載入失敗，請手動確認。{veg_error}")
-        veg_normal = st.multiselect("正常飯", options=normal_rice_list, default=normal_rice_list)
-        veg_no_rice = st.multiselect("不要白飯", options=no_rice_list, default=no_rice_list)
+        listed = set(normal_rice_list) | set(no_rice_list)
+        rv = lambda rice, in_list: [r["姓名"] for r in rec_veg if r["飯量"] == rice and ((r["姓名"] in listed) == in_list)]
+        veg_normal = st.multiselect("正常飯", options=normal_rice_list, key=f"veg_n_{today_str}",
+                                    default=[n for n in rv("正常飯", True)] if rec_veg else normal_rice_list)
+        veg_no_rice = st.multiselect("不要白飯", options=no_rice_list, key=f"veg_x_{today_str}",
+                                     default=[n for n in rv("不要白飯", True)] if rec_veg else no_rice_list)
         t1, t2 = st.columns(2)
         with t1:
-            temp_veg_normal = split_names(st.text_input("➕ 臨時加訂・正常飯", placeholder="不在名單的人，多人用、隔開"))
+            temp_veg_normal = split_names(st.text_input("➕ 臨時加訂・正常飯", placeholder="不在名單的人，多人用、隔開",
+                                                        key=f"veg_tn_{today_str}", value="、".join(rv("正常飯", False))))
         with t2:
-            temp_veg_no_rice = split_names(st.text_input("➕ 臨時加訂・不要白飯", placeholder="例：王小明、陳大華"))
+            temp_veg_no_rice = split_names(st.text_input("➕ 臨時加訂・不要白飯", placeholder="例：王小明、陳大華",
+                                                         key=f"veg_tx_{today_str}", value="、".join(rv("不要白飯", False))))
         veg_listed = set(veg_normal) | set(veg_no_rice)
         veg_normal = veg_normal + [n for n in temp_veg_normal if n not in veg_listed]
         veg_no_rice = veg_no_rice + [n for n in temp_veg_no_rice if n not in veg_listed]
@@ -374,10 +407,12 @@ with tab_am:
                     display_date = f"{today_str} ({today_menu['星期'].values[0]})"
                 m1, m2 = st.columns([3, 2])
                 with m1:
-                    main_type = st.radio(f"主菜：{main_dish}", MAIN_TYPES, horizontal=True,
+                    main_type = st.radio(f"主菜：{main_dish}", MAIN_TYPES, horizontal=True, key=f"main_type_{today_str}",
+                                         index=1 if str(rec.get("主菜類型", "")).startswith("散肉") else 0,
                                          help="散肉自助時容易多夾，通常要多加購；記下來之後可以算出散肉日平均要加多少")
                 with m2:
-                    extra_main_count = st.number_input("加購主菜（30 元／份）", min_value=0, value=10, step=1)
+                    extra_main_count = st.number_input("加購主菜（30 元／份）", min_value=0, step=1, key=f"main_n_{today_str}",
+                                                       value=rec_int("加購主菜", 10) if rec else 10)
                 st.caption("配菜（10 元）依風險係數自動建議：🔴 A 級 🟡 一般 🟢 C 級保底")
                 side_cols = st.columns(2)
                 for i, side in enumerate(sides):
@@ -396,7 +431,8 @@ with tab_am:
                         else:
                             mark = "🟡"
                     with side_cols[i % 2]:
-                        side_dishes[side] = st.number_input(f"{mark} {side}".strip(), min_value=0, value=suggested_amount, step=1)
+                        side_dishes[side] = st.number_input(f"{mark} {side}".strip(), min_value=0, step=1, key=f"side_{i}_{today_str}",
+                                                            value=int(rec_sides.get(side, 0)) if rec_sides else suggested_amount)
             else:
                 st.error(f"找不到 {today_str} 的菜單，請確認日期，或到「⚙️ 名單與菜單」更新菜單試算表。")
         except Exception as e:
@@ -441,9 +477,8 @@ with tab_am:
 * 🔴 請務必預留「檢體一份」"""
 
     with right:
-        st.subheader("傳給兩個團膳群組")
-        st.markdown("1. 👥 **工研院 強心臟組（家常在）**　2. 👥 **FY114 家常在x工研院**")
-        st.caption("按框框右上角的 📋 圖示複製，分別貼到兩個群組。")
+        st.subheader("傳給團膳群組")
+        st.caption("按框框右上角的 📋 圖示複製，貼到團膳群組。")
         st.code(morning_msg, language="text")
         if has_gs_secret():
             if st.button(f"💾 記錄今天的訂餐（{grand_total} 份）", type="primary", use_container_width=True):
@@ -458,6 +493,7 @@ with tab_am:
                                                      [(n, "不要白飯") for n in veg_no_rice],
                                                      set(normal_rice_list) | set(no_rice_list)))
                     load_today_status.clear()
+                    load_veg_log.clear()
                 except Exception as e:
                     st.error(f"寫入失敗：{e}")
             st.caption("這個按鈕只會存紀錄，不會傳任何訊息。明細請照上面複製貼到團膳群組，貼完再按一下。下午結算和預測分析會用到，同一天再按一次會覆蓋。")
@@ -473,17 +509,20 @@ with tab_prep:
         st.subheader("今天的外帶與餐盤")
         if names_error:
             st.warning(f"⚠️ 外帶餐盤名單載入失敗，請手動選擇。{names_error}")
-        st.markdown(f"**🥡 方便素外帶**：{veg_total} 份（依早上訂餐分頁）")
+        st.markdown(f"**🥡 方便素外帶**：{veg_total} 份（自動帶入早上訂餐的方便素名單）")
         meat_opts = names_of("葷食外帶")
-        meat_takeout_names = st.multiselect("🍱 葷食外帶", options=meat_opts, default=names_of("葷食外帶", True))
-        plate_opts = names_of("餐盤")
-        plate_names = st.multiselect("🍽️ 現場餐盤", options=plate_opts, default=names_of("餐盤", True))
-        st.caption("要加人或改每天預設，到「⚙️ 名單與菜單」打開試算表修改。")
+        meat_takeout_names = st.multiselect("🍱 葷食外帶", options=meat_opts, default=names_of("葷食外帶", True),
+                                            key=f"meat_{today_str}")
+        # 現場餐盤：固定每天用餐的人自動帶入，請假時按 ✕ 拿掉
+        plate_default = list(dict.fromkeys(FIXED_PLATE + names_of("餐盤", True)))
+        plate_opts = list(dict.fromkeys(plate_default + names_of("餐盤")))
+        plate_names = st.multiselect("🍽️ 現場餐盤", options=plate_opts, default=plate_default, key=f"plate_{today_str}")
+        st.caption("請假的人按 ✕ 拿掉。要加人或改每天預設，到「⚙️ 名單與菜單」打開試算表修改。")
 
     veg_details_list = [f"{n}(正常飯)" for n in veg_normal] + [f"{n}(不要飯)" for n in veg_no_rice]
     prep_msg = f"""【 📅 {display_date} 備餐與打飯明細 】
 
-慧萍、小容、玉玲 妳們好，今日需協助打包與裝盤的明細如下：
+大家好，今日需協助打包與裝盤的明細如下：
 
 一、 🥡 方便素外帶 (共 {veg_total} 份)
 * 名單：{bullet_list(veg_details_list)}
@@ -498,7 +537,6 @@ with tab_prep:
 
     with right:
         st.subheader("09:30 傳給內部備餐群組")
-        st.markdown("👥 **玉玲 Ling, 子健《秉澔&秉宸》, 黃慧萍, 欣柔, 小容**")
         st.code(prep_msg, language="text")
 
 # ==========================================
@@ -561,7 +599,6 @@ with tab_pm:
     missing = [n for n, v in [("現場付現", cash_count), ("便當盒", box_count), ("環電", hd_count)] if v is None]
     with right:
         st.subheader("13:00 傳給團膳群組")
-        st.markdown("👥 **工研院 強心臟組（家常在）**")
         if missing:
             st.warning(f"⚠️ 還沒填：{'、'.join(missing)}。填好後才會顯示結算明細，避免用到錯的數字。")
         else:
