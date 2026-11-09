@@ -354,7 +354,8 @@ if has_gs_secret():
     cards = [
         card("08:30", "早上訂餐",
              f"{order_row.get('總訂餐份數', '')} 份" if order_row else "還沒記錄",
-             f"記錄於 {str(order_row.get('寫入時間', ''))[-5:]}" if order_row else "傳完團膳記得按「記錄」", bool(order_row)),
+             f"用餐 {order_row.get('用餐人數', '')}＋換菜 {order_row.get('換菜折合', '')}・記錄於 {str(order_row.get('寫入時間', ''))[-5:]}"
+             if order_row else "傳完團膳記得按「記錄」", bool(order_row)),
         card("13:10", "卡機刷卡",
              f"{counts_top.get('刷卡總數', '')} 筆" if isinstance(counts_top, dict) else "等卡機資料",
              f"環電 {counts_top.get('環電', '')}・工研院 {counts_top.get('工研院', '')}" if isinstance(counts_top, dict)
