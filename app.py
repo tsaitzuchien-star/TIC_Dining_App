@@ -116,6 +116,78 @@ FIXED_PLATE = ["高健維", "林盛郎"]   # 現場餐盤每天固定用餐（�
 VEG_LOG_SHEET = "素食訂購紀錄"   # 每天每人一列，統計素食訂購（含臨時加訂）
 VEG_LOG_HEADERS = ["日期", "姓名", "飯量", "名單內"]
 
+CALIB_DEFAULT = {"08:20已到常客": 2.6, "09:20已到常客": 1.06}   # 與戰情室、ctic_daily_record.py 相同
+CALIB_DAYS, CALIB_MIN = 10, 3
+FRIDAY_FACTOR, RAIN_FACTOR = 0.85, 1.03
+
+def attendance_ratio(column, day):
+    """出席率：最近 10 個非週五工作日「實際用餐＋現金 ÷ 該時點已到常客」的中位數，不足 3 天用預設值"""
+    try:
+        df = load_csv_data(TREND_CSV_URL)
+        t = pd.DataFrame({"d": pd.to_datetime(df["日期"].astype(str).str.replace("/", "-"), errors="coerce"),
+                          "act": pd.to_numeric(df["實際用餐"], errors="coerce"),
+                          "cash": pd.to_numeric(df["現金付款"], errors="coerce").fillna(0),
+                          "n": pd.to_numeric(df[column], errors="coerce")}).dropna()
+        t = t[(t["d"].dt.date < day) & (t["d"].dt.weekday != 4) & (t["act"] > 0) & (t["n"] > 0)].sort_values("d").tail(CALIB_DAYS)
+        if len(t) >= CALIB_MIN:
+            return float(((t["act"] + t["cash"]) / t["n"]).median())
+    except Exception:
+        pass
+    return CALIB_DEFAULT[column]
+
+@st.cache_data(ttl=600)
+def is_raining_now(hour=None):
+    """開放氣象資料；讀不到就當沒下雨（與戰情室相同）"""
+    import json, urllib.request
+    try:
+        d = json.load(urllib.request.urlopen(
+            "https://api.open-meteo.com/v1/forecast?latitude=23.9&longitude=120.68&current=weather_code,precipitation"
+            "&hourly=weather_code,precipitation&forecast_days=1&timezone=Asia%2FTaipei", timeout=8))
+        if hour is None:
+            return (d["current"]["precipitation"] or 0) > 0 or (d["current"]["weather_code"] or 0) >= 51
+        i = [t[-5:-3] for t in d["hourly"]["time"]].index(f"{hour:02d}")
+        return (d["hourly"]["precipitation"][i] or 0) > 0 or (d["hourly"]["weather_code"][i] or 0) >= 51
+    except Exception:
+        return False
+
+@st.cache_data(ttl=120)
+def load_regular_entries(date_str):
+    """今天已進園常客的進園時間（HH:MM:SS），來自「今日預測大腦」"""
+    try:
+        rows = open_access_log().worksheet("今日預測大腦").get_all_values()
+        h = rows[0]
+        ie, ir = h.index("EntryTime"), h.index("是否預測用餐")
+        return [r[ie].split()[1].zfill(8) for r in rows[1:]
+                if r[ir].strip() == "是" and r[ie].strip().replace("/", "-").startswith(date_str) and len(r[ie].split()) > 1]
+    except Exception:
+        return []
+
+def door_estimate(day):
+    """進園推估（與戰情室相同）：08:20 前不推估；08:20～09:20 出席率依時間漸變；09:20 後固定用 09:20 前到的人數"""
+    now = datetime.now(TAIPEI)
+    if day != now.date() or day.weekday() > 4:
+        return None
+    hm = now.strftime("%H:%M")
+    if hm < "08:20":
+        return None
+    times = load_regular_entries(f"{day:%Y-%m-%d}")
+    locked = hm >= "09:20"
+    count = sum(t <= "09:20:00" for t in times) if locked else len(times)
+    if not count:
+        return None
+    r0820, r0920 = attendance_ratio("08:20已到常客", day), attendance_ratio("09:20已到常客", day)
+    w = 1.0 if locked else min(1.0, ((now.hour * 60 + now.minute) - 500) / 60)   # 08:20 = 第 500 分鐘
+    ratio = r0820 + (r0920 - r0820) * w
+    v = math.ceil(count * ratio)
+    friday = day.weekday() == 4
+    if friday:
+        v = math.ceil(v * FRIDAY_FACTOR)
+    rain = is_raining_now(9 if locked else None)
+    if rain:
+        v = math.ceil(v * RAIN_FACTOR)
+    return {"estimate": v, "count": count, "ratio": ratio, "friday": friday, "rain": rain, "locked": locked,
+            "label": "09:20 前已到常客" if locked else "目前已到常客"}
+
 @st.cache_data(ttl=120)
 def load_veg_log(date_str):
     """當天記錄的方便素名單（重開網頁時帶回用）"""
@@ -344,12 +416,36 @@ with tab_am:
         if rec:
             st.success(f"已帶入早上 {str(rec.get('寫入時間', ''))[-5:]} 記錄的內容（{rec.get('總訂餐份數', '')} 份），要改直接修改再按一次記錄。")
         first_version, first_basis = first_version_base(selected_date)
-        default_base = max(0, first_version - len(normal_rice_list) - len(no_rice_list)) if first_version else 0
+        veg_listed_n = len(normal_rice_list) + len(no_rice_list)
+        history_base = max(0, first_version - veg_listed_n) if first_version else 0
+        default_base = history_base
+        # 進園推估：今天已到常客 × 出席率（與戰情室相同）；欣柔實際多在 08:40～09:30 下單，這時門禁資料已有參考價值
+        door = door_estimate(selected_date) if has_gs_secret() and first_version else None
+        door_base = max(0, door["estimate"] - veg_listed_n) if door else None
+        if door_base is not None:
+            default_base = int(math.floor((history_base + door_base) / 2 + 0.5))   # 預設帶兩者中間值
         if rec and rec_int("實際正常數量", -1) >= 0:
             default_base = rec_int("實際正常數量") - rec_int("臨時加量")   # 以早上記錄為準，避免預測值事後變動
         if first_version:
-            st.metric("📈 戰情室預測（桶餐）", f"{default_base} 份",
-                      help=f"戰情室第一版 {first_version} 份（{first_basis}）− 方便素 {len(normal_rice_list) + len(no_rice_list)} 份")
+            h1, h2, h3 = st.columns(3)
+            h1.metric("📈 歷史預測", f"{history_base} 份",
+                      help=f"桶餐份數：戰情室第一版 {first_version} 份（{first_basis}）− 方便素 {veg_listed_n} 份")
+            if door:
+                h2.metric("🚪 進園推估", f"{door_base} 份",
+                          help=f"{door['label']} {door['count']} 人 × 出席率 {door['ratio']:.2f}"
+                               f"{' × 週五 0.85' if door['friday'] else ''}{' × 雨天 1.03' if door['rain'] else ''}"
+                               f" = {door['estimate']} 份，再扣方便素 {veg_listed_n} 份")
+                if rec:
+                    h3.metric("📝 已記錄", f"{rec_int('實際正常數量')} 份", help="早上按「記錄」時送出的桶餐正常數量（含臨時加減量）")
+                else:
+                    h3.metric("🎯 建議", f"{default_base} 份", help="歷史預測與進園推估的中間值，會自動帶入下面的計算")
+                gap = abs(history_base - door_base)
+                if gap >= 15:
+                    st.warning(f"歷史預測和進園推估差 {gap} 份，今天可能比較特殊，請依現場狀況判斷。")
+                if not door["locked"]:
+                    st.caption("進園推估會隨進園人數變動，09:20 後固定。")
+            else:
+                h2.metric("🚪 進園推估", "—", help="08:20 後才開始推估；只在當天顯示")
         else:
             default_base = st.number_input("實際正常數量（份）", min_value=0, value=0, step=1,
                                            help="今天抓不到戰情室預測，請直接填")
