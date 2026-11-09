@@ -56,9 +56,10 @@ TREND_SHEET = "趨勢紀錄"
 ORDER_SHEET = "團膳訂單"        # 每天一列：早上送出的份數＋加量原因、主菜、換菜、下午結算
 ORDER_HEADERS = ["日期", "戰情室第一版", "實際正常數量", "換菜折合", "方便素", "用餐人數", "總訂餐份數", "寫入時間", "加購主菜",
                  "臨時加量", "加量原因", "主菜", "主菜類型", "換菜明細",
-                 "供餐調整", "總供餐數", "實際加購主菜", "現場付現", "便當盒", "環電", "結算寫入時間"]
+                 "供餐調整", "總供餐數", "實際加購主菜", "現場付現", "便當盒", "環電", "結算寫入時間",
+                 "沒吃到人數", "沒吃到原因"]
 AM_COLS = ("A", "N")            # 早上按鈕寫 A~N
-PM_COLS = ("O", "U")            # 下午按鈕寫 O~U
+PM_COLS = ("O", "W")            # 下午按鈕寫 O~W
 MAIN_TYPES = ["整塊（雞腿、排骨等，一人一塊）", "散肉（肉片、肉絲，容易多夾）"]
 # 趨勢紀錄的發佈 CSV（不需要金鑰），用來算戰情室的 08:30 第一版
 TREND_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSv8X_NJDPjSVJTEkFjdBTSJKjDnZ18eyf6yBdTBq2eVT8TB6_wB-UDUUVUoF5eUJrLSnDsqpu7OhbS/pub?gid=1825976142&single=true&output=csv"
@@ -685,12 +686,27 @@ with tab_pm:
                 hd_count = st.number_input("環電（人）", min_value=0, value=default_hd, step=1, placeholder="請填寫")
             with k3:
                 agl_count = st.number_input("奧鋼聯（人）", min_value=0, value=default_agl, step=1, placeholder="請填寫")
+        def pm_val(k):
+            """今天已記錄的下午數字（重開網頁自動帶回）；沒有就回傳 None"""
+            s = str((order_row or {}).get(k, "")).strip()
+            return int(s) if s.isdigit() else None
         st.markdown("**請填：**")
         c1, c2 = st.columns(2)
         with c1:
-            cash_count = st.number_input("現場付現（人）", min_value=0, value=None, step=1, placeholder="請填寫")
+            cash_count = st.number_input("現場付現（人）", min_value=0, value=pm_val("現場付現"), step=1, placeholder="請填寫",
+                                         key=f"cash_{today_str}")
         with c2:
-            box_count = st.number_input("加購外帶便當盒（組）", min_value=0, value=None, step=1, placeholder="請填寫")
+            box_count = st.number_input("加購外帶便當盒（組）", min_value=0, value=pm_val("便當盒"), step=1, placeholder="請填寫",
+                                        key=f"box_{today_str}")
+        st.markdown("**沒吃到的人**（有來但沒餐可吃，沒有就填 0）")
+        d1, d2 = st.columns(2)
+        with d1:
+            missed_count = st.number_input("沒吃到（人）", min_value=0, value=pm_val("沒吃到人數") or 0, step=1, key=f"missed_{today_str}")
+        with d2:
+            missed_opts = ["", "主菜不夠（散肉多夾）", "配菜不夠", "整體訂量不足", "其他"]
+            old_reason = str((order_row or {}).get("沒吃到原因", ""))
+            missed_reason = st.selectbox("原因", missed_opts, key=f"missed_r_{today_str}",
+                                         index=missed_opts.index(old_reason) if old_reason in missed_opts else 0)
 
     missing = [n for n, v in [("現場付現", cash_count), ("便當盒", box_count), ("環電", hd_count)] if v is None]
     with right:
@@ -732,7 +748,7 @@ with tab_pm:
                         st.success("✅ " + write_cash_to_trend(today_str, cash_count))
                         st.success("✅ " + write_order_part(today_str, [
                             adjust, total_served, main_served, cash_count, box_count, hd_count,
-                            datetime.now(TAIPEI).strftime("%Y-%m-%d %H:%M"),
+                            datetime.now(TAIPEI).strftime("%Y-%m-%d %H:%M"), missed_count, missed_reason,
                         ], PM_COLS, "下午結算"))
                         load_today_status.clear()
                     except Exception as e:
@@ -887,6 +903,18 @@ with tab_set:
   - 外帶餐盤名單：「姓名、類別（葷食外帶／餐盤）、每天預設帶入（是／否）」
 """)
     if has_gs_secret():
+        with st.expander("🍽️ 沒吃到統計（近 30 天）"):
+            try:
+                o = pd.DataFrame(forgot_ws(ORDER_SHEET).get_all_records())
+                o["沒吃到人數"] = pd.to_numeric(o.get("沒吃到人數"), errors="coerce").fillna(0)
+                o = o[pd.to_datetime(o["日期"]) >= pd.Timestamp(selected_date) - pd.Timedelta(days=30)]
+                hit = o[o["沒吃到人數"] > 0]
+                st.markdown(f"發生 **{len(hit)}** 天，共 **{int(hit['沒吃到人數'].sum())}** 人沒吃到")
+                if len(hit):
+                    st.dataframe(hit[["日期", "主菜", "主菜類型", "加購主菜", "總訂餐份數", "沒吃到人數", "沒吃到原因"]].iloc[::-1],
+                                 hide_index=True, use_container_width=True)
+            except Exception as e:
+                st.caption(f"還沒有統計資料（{type(e).__name__}）")
         with st.expander("🥬 素食訂購統計（近 30 天）"):
             try:
                 v = pd.DataFrame(open_access_log().worksheet(VEG_LOG_SHEET).get_all_records())
