@@ -131,6 +131,18 @@ def rainy_dates():
     except Exception:
         return set()
 
+MODEL_PARAMS_URL = "https://raw.githubusercontent.com/tsaitzuchien-star/CTIC_Dining_Prediction/main/data/model_params.json"
+PARAM_RATIO_KEY = {"08:20已到常客": "r0820", "09:20已到常客": "r0920"}
+
+@st.cache_data(ttl=600)
+def model_params():
+    """GitHub 每天下午自動校準的參數（scripts/calibrate_models.py，2026-11-18 起）；讀不到回傳空 dict，照舊算法"""
+    import json, urllib.request
+    try:
+        return json.load(urllib.request.urlopen(MODEL_PARAMS_URL, timeout=8))
+    except Exception:
+        return {}
+
 def _trend_ratios(column, day):
     """趨勢紀錄裡 day 之前各天的（日期, 出席率），出席率＝實際用餐＋現金 ÷ 該時點已到常客"""
     df = load_csv_data(TREND_CSV_URL)
@@ -146,7 +158,12 @@ def _trend_ratios(column, day):
 
 def attendance_ratio(column, day):
     """出席率（與 ctic_daily_record.py 相同）：平日＝最近 10 個非週五、沒下雨工作日的中位數；
-    週五＝最近 6 個沒下雨週五自己的中位數（不足 3 個先用平日×0.85）。不足 3 天用預設值"""
+    週五＝最近 6 個沒下雨週五自己的中位數（不足 3 個先用平日×0.85）。不足 3 天用預設值
+    有自動校準參數時優先用（用快照當下人數算，跟早上看到的人數同口徑）"""
+    key = PARAM_RATIO_KEY.get(column)
+    r_auto = (model_params().get("ratios") or {}).get(("f" + key) if key and day.weekday() == 4 else key) if key else None
+    if r_auto:
+        return float(r_auto)
     try:
         t = _trend_ratios(column, day)
         base = t[~t["fri"] & ~t["rain"]].tail(CALIB_DAYS)
@@ -287,10 +304,36 @@ def first_version_base(day):
         t = t[(t["d"].dt.date < day) & (t["d"].dt.weekday == day.weekday()) & (t["a"] > 0)]
         vals = t.sort_values("d")["v"].tail(BASE_LOOKBACK)
         if len(vals) >= 4:
-            return int(math.floor(vals.median() + 0.5)), f"近 {len(vals)} 次同星期實際用餐（含現金）中位數"
+            return adjust_first_version(day, int(math.floor(vals.median() + 0.5)),
+                                        f"近 {len(vals)} 次同星期實際用餐（含現金）中位數")
     except Exception as e:
         return FALLBACK_BASE[day.weekday()], f"固定星期基準量（趨勢紀錄讀取失敗：{e}）"
     return FALLBACK_BASE[day.weekday()], "固定星期基準量（趨勢資料不足）"
+
+def adjust_first_version(day, base, basis):
+    """依自動選模：必要時混入 08:20 已到常客；連假前一天乘自動校準係數（與戰情室相同）"""
+    mp = model_params()
+    fv, he = mp.get("first_version") or {}, mp.get("holiday_eve") or {}
+    now = datetime.now(TAIPEI)
+    w = fv.get("w0820") or 0
+    if fv.get("method") == "blend0820" and w > 0 and day == now.date() and now.strftime("%H:%M") >= "08:20":
+        n = sum(t <= "08:20:00" for t in load_regular_entries(f"{day:%Y-%m-%d}"))
+        if n:
+            r8 = attendance_ratio("08:20已到常客", day)
+            base = int(math.floor((1 - w) * base + w * n * r8 + 0.5))
+            basis += f"；混入 08:20 已到常客 {n}×{r8:.2f}（比重 {w}，自動選模）"
+    if he.get("enabled") and he.get("factor") and f"{day:%Y-%m-%d}" in (he.get("upcoming") or []):
+        base = int(math.floor(base * he["factor"] + 0.5))
+        basis += f"；連假前一天 ×{he['factor']}（自動校準）"
+    return base, basis
+
+def door_weight():
+    """App 建議份數裡進園推估的比重：自動校準值，讀不到用 0.5（各半）"""
+    try:
+        w = float((model_params().get("suggest") or {}).get("door_weight"))
+        return min(1.0, max(0.0, w))
+    except (TypeError, ValueError):
+        return 0.5
 
 def order_ws():
     """「團膳訂單」分頁；舊表只有 A~I 欄，第一次用時自動補上新欄位標題"""
@@ -458,7 +501,8 @@ with tab_am:
         door = door_estimate(selected_date) if has_gs_secret() and first_version else None
         door_base = max(0, door["estimate"] - veg_listed_n) if door else None
         if door_base is not None:
-            default_base = int(math.floor((history_base + door_base) / 2 + 0.5))   # 預設帶兩者中間值
+            wd = door_weight()   # 進園推估的比重，每週依實際誤差自動校正（原本固定各半）
+            default_base = int(math.floor(history_base * (1 - wd) + door_base * wd + 0.5))
         if rec and rec_int("實際正常數量", -1) >= 0:
             default_base = rec_int("實際正常數量") - rec_int("臨時加量")   # 以早上記錄為準，避免預測值事後變動
         if first_version:
@@ -474,7 +518,7 @@ with tab_am:
                 if rec:
                     h3.metric("📝 已記錄", f"{rec_int('實際正常數量')} 份", help="早上按「記錄」時送出的桶餐正常數量（含臨時加減量）")
                 else:
-                    h3.metric("🎯 建議", f"{default_base} 份", help="歷史預測與進園推估的中間值，會自動帶入下面的計算")
+                    h3.metric("🎯 建議", f"{default_base} 份", help=f"歷史預測 ×{1 - door_weight():.2f} ＋ 進園推估 ×{door_weight():.2f}（比重依最近實際誤差自動校正），會自動帶入下面的計算")
                 gap = abs(history_base - door_base)
                 if gap >= 15:
                     st.warning(f"歷史預測和進園推估差 {gap} 份，今天可能比較特殊，請依現場狀況判斷。")
