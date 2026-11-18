@@ -118,23 +118,57 @@ VEG_LOG_SHEET = "素食訂購紀錄"   # 每天每人一列，統計素食訂購
 VEG_LOG_HEADERS = ["日期", "姓名", "飯量", "名單內"]
 
 CALIB_DEFAULT = {"08:20已到常客": 2.6, "09:20已到常客": 1.06}   # 與戰情室、ctic_daily_record.py 相同
-CALIB_DAYS, CALIB_MIN = 10, 3
-FRIDAY_FACTOR, RAIN_FACTOR = 0.85, 1.03
+CALIB_DAYS, CALIB_MIN, CALIB_SPECIAL = 10, 3, 6
+FRIDAY_FACTOR, RAIN_FACTOR = 0.85, 1.03   # 只在週五／雨天資料還不足 3 次時使用
+WEATHER_CSV = "https://raw.githubusercontent.com/tsaitzuchien-star/CTIC_Dining_Prediction/main/data/weather.csv"
+
+@st.cache_data(ttl=3600)
+def rainy_dates():
+    """GitHub 每天抓的天氣：09 點有下雨的日期"""
+    try:
+        w = pd.read_csv(WEATHER_CSV, dtype=str)
+        return set(w.loc[w["09點下雨"] == "是", "日期"])
+    except Exception:
+        return set()
+
+def _trend_ratios(column, day):
+    """趨勢紀錄裡 day 之前各天的（日期, 出席率），出席率＝實際用餐＋現金 ÷ 該時點已到常客"""
+    df = load_csv_data(TREND_CSV_URL)
+    t = pd.DataFrame({"d": pd.to_datetime(df["日期"].astype(str).str.replace("/", "-"), errors="coerce"),
+                      "act": pd.to_numeric(df["實際用餐"], errors="coerce"),
+                      "cash": pd.to_numeric(df["現金付款"], errors="coerce").fillna(0),
+                      "n": pd.to_numeric(df[column], errors="coerce")}).dropna()
+    t = t[(t["d"].dt.date < day) & (t["d"].dt.weekday < 5) & (t["act"] > 0) & (t["n"] > 0)].sort_values("d")
+    t["r"] = (t["act"] + t["cash"]) / t["n"]
+    t["rain"] = t["d"].dt.strftime("%Y-%m-%d").isin(rainy_dates())
+    t["fri"] = t["d"].dt.weekday == 4
+    return t
 
 def attendance_ratio(column, day):
-    """出席率：最近 10 個非週五工作日「實際用餐＋現金 ÷ 該時點已到常客」的中位數，不足 3 天用預設值"""
+    """出席率（與 ctic_daily_record.py 相同）：平日＝最近 10 個非週五、沒下雨工作日的中位數；
+    週五＝最近 6 個沒下雨週五自己的中位數（不足 3 個先用平日×0.85）。不足 3 天用預設值"""
     try:
-        df = load_csv_data(TREND_CSV_URL)
-        t = pd.DataFrame({"d": pd.to_datetime(df["日期"].astype(str).str.replace("/", "-"), errors="coerce"),
-                          "act": pd.to_numeric(df["實際用餐"], errors="coerce"),
-                          "cash": pd.to_numeric(df["現金付款"], errors="coerce").fillna(0),
-                          "n": pd.to_numeric(df[column], errors="coerce")}).dropna()
-        t = t[(t["d"].dt.date < day) & (t["d"].dt.weekday != 4) & (t["act"] > 0) & (t["n"] > 0)].sort_values("d").tail(CALIB_DAYS)
-        if len(t) >= CALIB_MIN:
-            return float(((t["act"] + t["cash"]) / t["n"]).median())
+        t = _trend_ratios(column, day)
+        base = t[~t["fri"] & ~t["rain"]].tail(CALIB_DAYS)
+        r = float(base["r"].median()) if len(base) >= CALIB_MIN else CALIB_DEFAULT[column]
+        if day.weekday() == 4:
+            f = t[t["fri"] & ~t["rain"]].tail(CALIB_SPECIAL)
+            return float(f["r"].median()) if len(f) >= CALIB_MIN else r * FRIDAY_FACTOR
+        return r
+    except Exception:
+        return CALIB_DEFAULT[column] * (FRIDAY_FACTOR if day.weekday() == 4 else 1)
+
+def rain_factor(day):
+    """雨天係數：最近 6 個下雨平日「全日出席率 ÷ 平日全日出席率」的中位數，不足 3 天用 1.03"""
+    try:
+        t = _trend_ratios("全日已到常客", day)
+        base = t[~t["fri"] & ~t["rain"]].tail(CALIB_DAYS)
+        wet = t[~t["fri"] & t["rain"]].tail(CALIB_SPECIAL)
+        if len(base) >= CALIB_MIN and len(wet) >= CALIB_MIN:
+            return float((wet["r"] / base["r"].median()).median())
     except Exception:
         pass
-    return CALIB_DEFAULT[column]
+    return RAIN_FACTOR
 
 @st.cache_data(ttl=600)
 def is_raining_now(hour=None):
@@ -179,15 +213,14 @@ def door_estimate(day):
     r0820, r0920 = attendance_ratio("08:20已到常客", day), attendance_ratio("09:20已到常客", day)
     w = 1.0 if locked else min(1.0, ((now.hour * 60 + now.minute) - 500) / 60)   # 08:20 = 第 500 分鐘
     ratio = r0820 + (r0920 - r0820) * w
-    v = math.ceil(count * ratio)
+    v = math.ceil(count * ratio)          # 週五的出席率已是週五自己的值
     friday = day.weekday() == 4
-    if friday:
-        v = math.ceil(v * FRIDAY_FACTOR)
     rain = is_raining_now(9 if locked else None)
+    rf = rain_factor(day)
     if rain:
-        v = math.ceil(v * RAIN_FACTOR)
-    return {"estimate": v, "count": count, "ratio": ratio, "friday": friday, "rain": rain, "locked": locked,
-            "label": "09:20 前已到常客" if locked else "目前已到常客"}
+        v = math.ceil(v * rf)
+    return {"estimate": v, "count": count, "ratio": ratio, "friday": friday, "rain": rain, "rain_factor": rf,
+            "locked": locked, "label": "09:20 前已到常客" if locked else "目前已到常客"}
 
 @st.cache_data(ttl=120)
 def load_veg_log(date_str):
@@ -434,8 +467,9 @@ with tab_am:
             if door:
                 h2.metric("🚪 進園推估", f"{door_base} 份",
                           help=f"{door['label']} {door['count']} 人 × 出席率 {door['ratio']:.2f}"
-                               f"{' × 週五 0.85' if door['friday'] else ''}{' × 雨天 1.03' if door['rain'] else ''}"
-                               f" = {door['estimate']} 份，再扣方便素 {veg_listed_n} 份")
+                               + ("（週五出席率）" if door["friday"] else "")
+                               + (" × 雨天 %.2f" % door["rain_factor"] if door["rain"] else "")
+                               + f" = {door['estimate']} 份，再扣方便素 {veg_listed_n} 份")
                 if rec:
                     h3.metric("📝 已記錄", f"{rec_int('實際正常數量')} 份", help="早上按「記錄」時送出的桶餐正常數量（含臨時加減量）")
                 else:
